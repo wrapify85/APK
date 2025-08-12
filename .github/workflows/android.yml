@@ -4,25 +4,21 @@ on:
   workflow_dispatch:
     inputs:
       appName:
-        description: "Optional app name"
+        description: "App Name"
         required: false
-        default: ""
+        default: "My App"
       bundleId:
-        description: "Optional bundle id, e.g. com.example.app"
+        description: "Bundle ID (e.g. com.example.app)"
         required: false
-        default: ""
+        default: "com.example.app"
       siteUrl:
-        description: "Optional site url your web app runs on"
+        description: "Your site URL (https://...)"
         required: false
-        default: ""
-
-permissions:
-  contents: write
+        default: "https://example.com"
 
 jobs:
   build-android:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,52 +26,63 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: "20"
 
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: 17
+          distribution: "temurin"
+          java-version: "17"
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
 
-      - name: Ensure Capacitor CLI
+      - name: Prepare project (use repo if present, else bootstrap)
         run: |
-          npm i -D @capacitor/cli
-          npm i @capacitor/core
+          set -euo pipefail
+          if [ -f package.json ]; then
+            echo "Using repository project"
+            npm install
+          else
+            echo "Bootstrapping minimal Capacitor wrapper"
+            npm init -y
+            npm install @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6 @capacitor/status-bar@6 @capacitor/splash-screen@6
 
-      - name: Ensure capacitor.config.json and apply inputs
-        env:
-          APP_NAME: ${{ github.event.inputs.appName }}
-          BUNDLE_ID: ${{ github.event.inputs.bundleId }}
-          SITE_URL: ${{ github.event.inputs.siteUrl }}
-        run: |
-          if [ ! -f capacitor.config.json ]; then
-            cat > capacitor.config.json <<'JSON'
-          {
-            "appId": "app.lovable.placeholder",
-            "appName": "Wrap App",
-            "webDir": "dist",
-            "server": { "url": "", "cleartext": true }
-          }
-          JSON
+            mkdir -p dist
+            cat > dist/index.html << 'EOF'
+            <!doctype html>
+            <html>
+              <head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Capacitor Wrapper</title></head>
+              <body><p>This wrapper loads your site via Capacitor server.url.</p></body>
+            </html>
+            EOF
+
+            cat > capacitor.config.ts << 'EOF'
+            import type { CapacitorConfig } from '@capacitor/cli';
+
+            const config: CapacitorConfig = {
+              appId: '${{ inputs.bundleId }}',
+              appName: '${{ inputs.appName }}',
+              webDir: 'dist',
+              server: { url: '${{ inputs.siteUrl }}', cleartext: true },
+              plugins: { SplashScreen: { launchShowDuration: 0 } }
+            };
+
+            export default config;
+            EOF
           fi
-          node -e "const fs=require('fs');const p='capacitor.config.json';const cfg=JSON.parse(fs.readFileSync(p,'utf8'));if(process.env.APP_NAME)cfg.appName=process.env.APP_NAME;if(process.env.BUNDLE_ID)cfg.appId=process.env.BUNDLE_ID;if(process.env.SITE_URL){cfg.server=cfg.server||{};cfg.server.url=process.env.SITE_URL;cfg.server.cleartext=true;}fs.writeFileSync(p,JSON.stringify(cfg,null,2));"
 
-      - name: Build web
-        run: npm run build
-
-      - name: Add Android platform
+      - name: Add Android platform (idempotent)
         run: npx cap add android || true
 
       - name: Sync Capacitor
-        run: npx cap sync android
+        run: npx cap sync
 
-      - name: Build APK (debug)
-        working-directory: android
-        run: ./gradlew assembleDebug
+      - name: Build Android (APK + AAB)
+        run: |
+          cd android
+          ./gradlew --no-daemon assembleDebug
+          ./gradlew --no-daemon bundleDebug
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -84,4 +91,3 @@ jobs:
           path: |
             android/app/build/outputs/**/*.apk
             android/app/build/outputs/**/*.aab
-          if-no-files-found: warn
