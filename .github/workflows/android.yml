@@ -4,133 +4,108 @@ on:
   workflow_dispatch:
     inputs:
       appName:
-        description: App display name
+        description: Display name for the app (e.g., Wrap Craft)
         required: true
-        default: WrapCraft
+        type: string
       bundleId:
-        description: Android package name (e.g., com.example.app)
+        description: Application ID (e.g., com.yourcompany.wrapcraft)
         required: true
-        default: com.wrapcraft.app
+        type: string
       siteUrl:
-        description: Optional web URL to load inside the app (e.g., https://your-site.com)
-        required: false
-        default: ""
+        description: Web app URL to wrap (must be https://)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: write
 
 jobs:
   build:
-    name: Build APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
-      - name: Checkout (repo contents not required for build)
+      - name: Checkout (not used by build but keeps workspace consistent)
         uses: actions/checkout@v4
 
-      - name: Set up Java 17 (Temurin)
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Java (JDK 17 for modern Android Gradle Plugin)
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
-          cache: gradle
+          java-version: '17'
 
-      - name: Set up Android SDK
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Accept Android SDK licenses
-        run: yes | sdkmanager --licenses
+      - name: Accept Android licenses and install SDK packages
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses > /dev/null
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
-      - name: Set up Node.js 18
-        uses: actions/setup-node@v4
-        with:
-          node-version: "18"
-
-      - name: Bootstrap minimal Capacitor project
+      - name: Bootstrap Capacitor wrapper
+        shell: bash
         run: |
           set -euo pipefail
-          mkdir -p app
-          cd app
+          mkdir -p wrapper
+          cd wrapper
 
-          # Initialize Node project
+          # Minimal Node project
           npm init -y
-          npm pkg set name=android-wrapper version=0.0.1 private=true
 
-          # Install Capacitor 6 (CLI, core, android)
-          npm install -D @capacitor/cli@6
-          npm install @capacitor/core@6 @capacitor/android@6
+          # Install Capacitor (CLI, core, and Android)
+          npm install --save-exact @capacitor/core@6 @capacitor/android@6
+          npm install --save-dev --save-exact @capacitor/cli@6
 
-          # Minimal web content
-          mkdir -p dist
-          cat > dist/index.html <<'HTML'
-          <!doctype html>
-          <html lang="en">
-            <head>
-              <meta charset="UTF-8" />
-              <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-              <title>Loading…</title>
-              <style>
-                html,body{height:100%;margin:0}
-                body{display:flex;align-items:center;justify-content:center;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#111}
-              </style>
-            </head>
-            <body>
-              <div id="app">Launching…</div>
-              <script>
-                (function () {
-                  var siteUrl = "__SITE_URL__";
-                  if (siteUrl && siteUrl.trim()) {
-                    location.replace(siteUrl);
-                  }
-                })();
-              </script>
-            </body>
-          </html>
-          HTML
+          # Create Capacitor config using workflow inputs
+          cat > capacitor.config.ts << 'EOF'
+          import type { CapacitorConfig } from '@capacitor/cli';
 
-          # Inject siteUrl into index.html (no-op if empty)
-          sed -i "s|__SITE_URL__|${{ inputs.siteUrl }}|g" dist/index.html
+          const config: CapacitorConfig = {
+            appId: '${{ inputs.bundleId }}',
+            appName: '${{ inputs.appName }}',
+            webDir: 'dist',
+            server: {
+              url: '${{ inputs.siteUrl }}',
+              cleartext: true
+            },
+            android: {
+              allowMixedContent: true
+            }
+          };
 
-          # Create Capacitor config (JSON) with optional server.url
-          {
-            echo '{'
-            echo '  "appId": "'"${{ inputs.bundleId }}"'",'
-            echo '  "appName": "'"${{ inputs.appName }}"'",'
-            echo '  "webDir": "dist"'
-            if [ -n "${{ inputs.siteUrl }}" ]; then
-              echo '  , "server": { "url": "'"${{ inputs.siteUrl }}"'", "cleartext": true }'
-            fi
-            echo '}'
-          } > capacitor.config.json
+          export default config;
+          EOF
 
-          # Add Android platform
-          npx cap add android --no-interactive
+          # Add Android platform and sync
+          npx cap add android --skip-deps
+          npx cap sync android
 
-          # Ensure the Gradle applicationId matches the provided bundleId (idempotent)
-          sed -i 's/^\(\s*applicationId\s*"\)[^"]*\("\)/\1'${{ inputs.bundleId }}'\2/' android/app/build.gradle || true
-
-          # Make sure cleartext traffic is allowed when using http:// URLs
-          if [ -n "${{ inputs.siteUrl }}" ] && echo "${{ inputs.siteUrl }}" | grep -qi '^http://'; then
-            MANIFEST="android/app/src/main/AndroidManifest.xml"
-            if ! grep -q 'usesCleartextTraffic="true"' "$MANIFEST"; then
-              # Add usesCleartextTraffic="true" to the <application> tag
-              sed -i 's|<application |<application android:usesCleartextTraffic="true" |' "$MANIFEST"
-            fi
-          fi
-
-          # Sync native project
-          npx cap sync android --no-interactive
-
-      - name: Build debug APK
-        working-directory: app/android
+      - name: Build Debug APK
+        shell: bash
+        working-directory: wrapper/android
         run: |
           set -euo pipefail
-          ./gradlew --no-daemon assembleDebug
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      # Note: Release AAB typically requires a keystore. Omitted to avoid failures.
+      # If you later add signing, you can enable this:
+      # - name: Build Release AAB
+      #   shell: bash
+      #   working-directory: wrapper/android
+      #   run: ./gradlew bundleRelease --no-daemon
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: android-apk-debug
-          path: app/android/app/build/outputs/apk/debug/app-debug.apk
+          name: android-apk
+          path: |
+            wrapper/android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
-
-      - name: Print success message
-        run: echo "APK built successfully. Download the artifact 'android-apk-debug' from this run."
