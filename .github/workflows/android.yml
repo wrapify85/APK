@@ -1,47 +1,47 @@
-# Save as: .github/workflows/android.yml
-name: Android Build (Capacitor minimal)
+name: Android Build (Lovable Capacitor)
 
 on:
   workflow_dispatch:
     inputs:
       appName:
-        description: App Name
-        required: true
-        default: wrap-craft
+        description: App name (display name)
+        required: false
+        default: Lovable Wrapper
       bundleId:
-        description: Android applicationId (e.g., com.example.app)
-        required: true
-        default: com.example.wrapcraft
+        description: Application ID (e.g., com.example.app)
+        required: false
+        default: app.lovable.wrapper
       siteUrl:
-        description: Your web app URL (https://...) loaded in the WebView
-        required: true
-      buildType:
-        description: Build variant
-        required: true
-        type: choice
-        default: debug
-        options: [debug, release]
+        description: Website your wrapper should open
+        required: false
+        default: https://example.com
+
+# Ensure the token can upload artifacts and access actions
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: android-build-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build-android:
+    name: Build Android
     runs-on: ubuntu-latest
-    env:
-      APP_NAME: ${{ inputs.appName }}
-      BUNDLE_ID: ${{ inputs.bundleId }}
-      SITE_URL: ${{ inputs.siteUrl }}
-      BUILD_TYPE: ${{ inputs.buildType }}
-      WORKDIR: android-wrapper
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node 20
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
-      - name: Setup Java 17 (Temurin)
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
@@ -50,104 +50,84 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Bootstrap Capacitor project
+      - name: Scaffold minimal Capacitor project
+        shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$WORKDIR"
-          cd "$WORKDIR"
+          mkdir -p app && cd app
 
-          # Minimal package.json with Capacitor 6 and TypeScript present
-          cat > package.json <<'PKG'
-          {
-            "name": "android-wrapper",
-            "version": "1.0.0",
-            "private": true,
-            "scripts": {
-              "cap": "cap",
-              "build": "echo \"no web build needed\""
-            },
-            "devDependencies": {
-              "typescript": "^5.5.4"
-            },
-            "dependencies": {
-              "@capacitor/android": "^6.1.0",
-              "@capacitor/core": "^6.1.0",
-              "@capacitor/cli": "^6.1.0"
-            }
-          }
-PKG
+          # Minimal package
+          npm init -y
+          npm pkg set name="lovable-capacitor-app" version="1.0.0"
 
-          npm i --no-audit --no-fund
+          # Capacitor deps
+          npm i -D @capacitor/cli@latest
+          npm i @capacitor/core@latest @capacitor/android@latest
 
-          # Minimal web assets (not used when server.url is set, but kept for safety)
+          # Minimal web assets
           mkdir -p dist
-          cat > dist/index.html <<'HTML'
+          cat > dist/index.html << 'EOF'
           <!doctype html>
           <html>
             <head>
-              <meta charset="utf-8"/>
-              <meta name="viewport" content="width=device-width,initial-scale=1"/>
-              <meta http-equiv="refresh" content="0;url=__SITE_URL__"/>
-              <title>Loading…</title>
+              <meta charset="utf-8" />
+              <meta name="viewport" content="width=device-width, initial-scale=1" />
+              <title>Wrapper</title>
+              <style>html,body{margin:0;padding:0;height:100%}iframe{border:0;width:100vw;height:100vh;display:block}</style>
             </head>
             <body>
-              <p>Opening app… <a href="__SITE_URL__">Continue</a></p>
+              <iframe src="%SITE_URL%"></iframe>
             </body>
           </html>
-HTML
-          sed -i "s|__SITE_URL__|$SITE_URL|g" dist/index.html
+          EOF
+          sed -i "s|%SITE_URL%|${{ inputs.siteUrl || 'https://example.com' }}|g" dist/index.html
 
-          # Use JSON config to avoid TypeScript requirement errors
-          cat > capacitor.config.json <<CFG
-          {
-            "appId": "${BUNDLE_ID}",
-            "appName": "${APP_NAME}",
-            "webDir": "dist",
-            "server": {
-              "url": "${SITE_URL}",
-              "cleartext": true
-            },
-            "android": {
-              "allowMixedContent": true
+          # Capacitor config
+          cat > capacitor.config.ts << 'EOF'
+          import type { CapacitorConfig } from '@capacitor/cli';
+
+          const config: CapacitorConfig = {
+            appId: '%APP_ID%',
+            appName: '%APP_NAME%',
+            webDir: 'dist',
+            server: {
+              url: '%SITE_URL%',
+              cleartext: true
             }
-          }
-CFG
+          };
 
-          npx cap add android --yes
+          export default config;
+          EOF
+          sed -i "s|%APP_ID%|${{ inputs.bundleId || 'app.lovable.wrapper' }}|g" capacitor.config.ts
+          sed -i "s|%APP_NAME%|${{ inputs.appName || 'Lovable Wrapper' }}|g" capacitor.config.ts
+          sed -i "s|%SITE_URL%|${{ inputs.siteUrl || 'https://example.com' }}|g" capacitor.config.ts
 
-          # Ensure correct applicationId in Gradle config
-          sed -i "s/applicationId \".*\"/applicationId \"${BUNDLE_ID}\"/" android/app/build.gradle
+          # Add Android platform (non-interactive)
+          npx cap add android --skip-deps
 
-          # Make gradlew executable just in case
-          chmod +x android/gradlew
+          # Increase Gradle memory to avoid OOM
+          sed -i 's/^org\.gradle\.jvmargs=.*/org.gradle.jvmargs=-Xmx3g -Dkotlin.daemon.jvm.options=-Xmx2g/' android/gradle.properties || true
 
-      - name: Build APK/AAB
-        working-directory: ${{ env.WORKDIR }}/android
-        run: |
-          set -euo pipefail
-          # Give Gradle more memory to reduce OOM risks on CI
-          echo "org.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8" >> gradle.properties
+      - name: Build Debug APK
+        working-directory: app/android
+        run: ./gradlew --no-daemon assembleDebug
 
-          if [ "${BUILD_TYPE}" = "release" ]; then
-            ./gradlew assembleRelease bundleRelease
-          else
-            ./gradlew assembleDebug
-          fi
+      - name: Try build Release AAB (optional)
+        working-directory: app/android
+        run: ./gradlew --no-daemon bundleRelease
+        continue-on-error: true
 
-      - name: Upload APK artifacts
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: app/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Upload AAB artifact (if exists)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: apk-${{ env.BUILD_TYPE }}
-          path: |
-            ${{ env.WORKDIR }}/android/app/build/outputs/apk/**/app-*.apk
-          if-no-files-found: warn
-
-      - name: Upload AAB artifacts (release only)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: aab-release
-          path: |
-            ${{ env.WORKDIR }}/android/app/build/outputs/bundle/release/*.aab
-          if-no-files-found: warn
+          name: app-release-aab
+          path: app/android/app/build/outputs/bundle/release/*.aab
+          if-no-files-found: ignore
