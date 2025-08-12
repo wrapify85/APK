@@ -1,45 +1,47 @@
+# Save as: .github/workflows/android.yml
 name: Android Build (Capacitor minimal)
 
 on:
   workflow_dispatch:
     inputs:
       appName:
-        description: Application display name
+        description: App Name
         required: true
-        type: string
+        default: wrap-craft
       bundleId:
-        description: Android package name (e.g., com.example.app)
+        description: Android applicationId (e.g., com.example.app)
         required: true
-        type: string
+        default: com.example.wrapcraft
       siteUrl:
-        description: Web app URL to wrap (https://... or http://... if cleartext)
+        description: Your web app URL (https://...) loaded in the WebView
         required: true
-        type: string
       buildType:
-        description: Build type
-        required: false
-        default: debug
+        description: Build variant
+        required: true
         type: choice
-        options:
-          - debug
-          - release
+        default: debug
+        options: [debug, release]
 
 jobs:
-  build:
+  build-android:
     runs-on: ubuntu-latest
     env:
+      APP_NAME: ${{ inputs.appName }}
+      BUNDLE_ID: ${{ inputs.bundleId }}
+      SITE_URL: ${{ inputs.siteUrl }}
       BUILD_TYPE: ${{ inputs.buildType }}
+      WORKDIR: android-wrapper
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node 20
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Setup Java
+      - name: Setup Java 17 (Temurin)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
@@ -47,84 +49,105 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          api-level: 34
-          build-tools: 34.0.0
 
       - name: Bootstrap Capacitor project
         run: |
           set -euo pipefail
-          cat > package.json <<'JSON'
+          mkdir -p "$WORKDIR"
+          cd "$WORKDIR"
+
+          # Minimal package.json with Capacitor 6 and TypeScript present
+          cat > package.json <<'PKG'
           {
-            "name": "wrap-craft",
+            "name": "android-wrapper",
             "version": "1.0.0",
             "private": true,
             "scripts": {
-              "build": "echo noop",
-              "cap:sync": "npx cap sync android"
-            },
-            "dependencies": {
-              "@capacitor/core": "^6.1.2"
+              "cap": "cap",
+              "build": "echo \"no web build needed\""
             },
             "devDependencies": {
-              "@capacitor/cli": "^6.1.2"
+              "typescript": "^5.5.4"
+            },
+            "dependencies": {
+              "@capacitor/android": "^6.1.0",
+              "@capacitor/core": "^6.1.0",
+              "@capacitor/cli": "^6.1.0"
             }
           }
-          JSON
+PKG
 
-          npm install --no-audit --no-fund
+          npm i --no-audit --no-fund
 
-          npx --yes @capacitor/cli init "${{ inputs.appName }}" "${{ inputs.bundleId }}" --skip-deps
-
-          cat > capacitor.config.ts <<'TS'
-          import { CapacitorConfig } from '@capacitor/cli';
-          const config: CapacitorConfig = {
-            appId: '${{ inputs.bundleId }}',
-            appName: '${{ inputs.appName }}',
-            webDir: 'dist',
-            server: {
-              url: '${{ inputs.siteUrl }}',
-              cleartext: true
-            }
-          };
-          export default config;
-          TS
-
+          # Minimal web assets (not used when server.url is set, but kept for safety)
           mkdir -p dist
-          printf '<!doctype html><html><head><meta charset="utf-8"><title>%s</title></head><body></body></html>' "${{ inputs.appName }}" > dist/index.html
+          cat > dist/index.html <<'HTML'
+          <!doctype html>
+          <html>
+            <head>
+              <meta charset="utf-8"/>
+              <meta name="viewport" content="width=device-width,initial-scale=1"/>
+              <meta http-equiv="refresh" content="0;url=__SITE_URL__"/>
+              <title>Loading…</title>
+            </head>
+            <body>
+              <p>Opening app… <a href="__SITE_URL__">Continue</a></p>
+            </body>
+          </html>
+HTML
+          sed -i "s|__SITE_URL__|$SITE_URL|g" dist/index.html
 
-      - name: Add Android platform
-        run: |
-          npm install @capacitor/android@latest --no-audit --no-fund
-          npx cap add android
-          npx cap sync android
+          # Use JSON config to avoid TypeScript requirement errors
+          cat > capacitor.config.json <<CFG
+          {
+            "appId": "${BUNDLE_ID}",
+            "appName": "${APP_NAME}",
+            "webDir": "dist",
+            "server": {
+              "url": "${SITE_URL}",
+              "cleartext": true
+            },
+            "android": {
+              "allowMixedContent": true
+            }
+          }
+CFG
+
+          npx cap add android --yes
+
+          # Ensure correct applicationId in Gradle config
+          sed -i "s/applicationId \".*\"/applicationId \"${BUNDLE_ID}\"/" android/app/build.gradle
+
+          # Make gradlew executable just in case
+          chmod +x android/gradlew
 
       - name: Build APK/AAB
-        working-directory: android
-        env:
-          BUILD_TYPE: ${{ env.BUILD_TYPE }}
+        working-directory: ${{ env.WORKDIR }}/android
         run: |
           set -euo pipefail
+          # Give Gradle more memory to reduce OOM risks on CI
+          echo "org.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8" >> gradle.properties
+
           if [ "${BUILD_TYPE}" = "release" ]; then
             ./gradlew assembleRelease bundleRelease
           else
-            ./gradlew assembleDebug bundleDebug
+            ./gradlew assembleDebug
           fi
 
       - name: Upload APK artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: app-${{ inputs.buildType }}-apk
-          path: android/app/build/outputs/apk/**/*.apk
-          if-no-files-found: error
-          retention-days: 14
+          name: apk-${{ env.BUILD_TYPE }}
+          path: |
+            ${{ env.WORKDIR }}/android/app/build/outputs/apk/**/app-*.apk
+          if-no-files-found: warn
 
-      - name: Upload AAB artifacts
+      - name: Upload AAB artifacts (release only)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: app-${{ inputs.buildType }}-aab
-          path: android/app/build/outputs/bundle/**/*.aab
+          name: aab-release
+          path: |
+            ${{ env.WORKDIR }}/android/app/build/outputs/bundle/release/*.aab
           if-no-files-found: warn
-          retention-days: 14
