@@ -1,51 +1,160 @@
-name: Build Android (Self-Contained)
+name: Build Android (Hardened Debug)
 
 on:
   workflow_dispatch:
     inputs:
       appName:
-        description: 'App Name'
+        description: App display name
         required: false
-        default: ''
-        type: string
+        default: WrapCraft
       bundleId:
-        description: 'Bundle Identifier (e.g., com.example.app)'
+        description: Android applicationId (e.g., com.example.app)
         required: false
-        default: ''
-        type: string
+        default: com.example.wrapcraft
       siteUrl:
-        description: 'Website URL to wrap (https://...)'
+        description: Your site URL (optional, used for Capacitor server.url)
         required: false
-        default: ''
-        type: string
-
-permissions:
-  contents: read
+        default: ""
 
 jobs:
-  android:
+  build-android:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    env:
+      APP_NAME: ${{ github.event.inputs.appName }}
+      BUNDLE_ID: ${{ github.event.inputs.bundleId }}
+      SITE_URL: ${{ github.event.inputs.siteUrl }}
+      CI: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
-      - name: Setup Java (JDK 17)
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '17'
+          distribution: "temurin"
+          java-version: "17"
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Accept licenses and install SDK packages
+      - name: Cache npm
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Ensure Node project (package.json)
         shell: bash
         run: |
-          set -e
-          yes | sdkmanager --licenses
+          set -euxo pipefail
+          if [ ! -f package.json ]; then
+            cat > package.json <<'JSON'
+            {
+              "name": "mobile-wrapper",
+              "version": "0.1.0",
+              "private": true,
+              "scripts": {
+                "build": "echo \"No web assets to build\"",
+                "sync": "npx cap sync",
+                "setup:perms": "node scripts/configure-permissions.js"
+              },
+              "dependencies": {
+                "@capacitor/core": "^6.1.2",
+                "@capacitor/android": "^6.1.2",
+                "@capacitor/ios": "^6.1.2",
+                "@capacitor/status-bar": "^6.0.1",
+                "@capacitor/splash-screen": "^6.0.1"
+              },
+              "devDependencies": {
+                "@capacitor/cli": "^6.1.2"
+              }
+            }
+JSON
+          fi
+
+      - name: Ensure Capacitor config and web assets
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if [ ! -f capacitor.config.ts ]; then
+            APP_NAME_SAFE="${APP_NAME:-WrapCraft}"
+            APP_ID_SAFE="${BUNDLE_ID:-com.example.wrapcraft}"
+            SITE_URL_SAFE="${SITE_URL:-}"
+            {
+              echo "import { CapacitorConfig } from '@capacitor/cli'"
+              echo ""
+              echo "const config: CapacitorConfig = {"
+              echo "  appId: '${APP_ID_SAFE}',"
+              echo "  appName: '${APP_NAME_SAFE}',"
+              echo "  webDir: 'dist',"
+              if [ -n "${SITE_URL_SAFE}" ]; then
+                echo "  server: { url: '${SITE_URL_SAFE}', cleartext: true },"
+              fi
+              echo "}"
+              echo ""
+              echo "export default config"
+            } > capacitor.config.ts
+          fi
+          mkdir -p dist
+          if [ ! -f dist/index.html ]; then
+            cat > dist/index.html <<'HTML'
+            <!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Wrapper</title></head><body><h1>Wrapper</h1></body></html>
+HTML
+          fi
+          mkdir -p scripts
+          if [ ! -f scripts/configure-permissions.js ]; then
+            echo "console.log('configure-permissions: noop');" > scripts/configure-permissions.js
+          fi
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Add Android platform (idempotent)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if [ ! -d android ]; then
+            npx cap add android
+          fi
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Build Android (Debug)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd android
+          ./gradlew --no-daemon assembleDebug bundleDebug
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-artifacts
+          path: |
+            android/app/build/outputs/**/*.apk
+            android/app/build/outputs/**/*.aab
