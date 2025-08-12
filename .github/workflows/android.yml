@@ -1,70 +1,152 @@
-name: Build Android (Self‑Contained)
+name: Android Build
 
 on:
   workflow_dispatch:
     inputs:
       appName:
-        description: "Display name of your app"
+        description: App display name (e.g., Wrap Craft)
         required: true
-        default: "Wrap Craft"
+        type: string
       bundleId:
-        description: "Android applicationId (e.g., com.example.app)"
+        description: Android package name (e.g., com.example.app)
         required: true
-        default: "app.lovable.wrapcraft"
+        type: string
       siteUrl:
-        description: "Your website URL to wrap (https://...)"
+        description: URL your app should load inside the WebView (https://...)
         required: true
-        default: "https://example.com"
+        type: string
 
 jobs:
-  build:
-    name: Android APK
+  build-android:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
-    env:
-      APP_NAME: ${{ inputs.appName }}
-      BUNDLE_ID: ${{ inputs.bundleId }}
-      SITE_URL: ${{ inputs.siteUrl }}
 
     steps:
-      - name: Checkout (no repo content required)
+      - name: Checkout (no cache)
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Setup Node
+      - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
+          node-version: '20'
 
-      - name: Setup Java
+      - name: Setup Java 17 (Zulu)
         uses: actions/setup-java@v4
         with:
-          distribution: "temurin"
-          java-version: "17"
+          distribution: 'zulu'
+          java-version: '17'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK packages
+      - name: Bootstrap minimal Capacitor project
         run: |
-          yes | sdkmanager --licenses
-          sdkmanager "platform-tools" \
-                     "platforms;android-34" "build-tools;34.0.0" \
-                     "platforms;android-33" "build-tools;33.0.2"
+          set -euxo pipefail
+          WORKDIR="$GITHUB_WORKSPACE/mobile"
+          mkdir -p "$WORKDIR"
+          cd "$WORKDIR"
 
-      - name: Initialize minimal project
-        run: |
-          set -e
-          cat > package.json << 'EOF'
-          {
-            "name": "wrap-craft-ci",
-            "version": "1.0.0",
-            "private": true
+          # Initialize a bare project and install Capacitor
+          npm init -y
+          npm install @capacitor/cli@latest @capacitor/core@latest --save
+
+          # Initialize Capacitor app skeleton
+          npx cap init "${{ inputs.appName }}" "${{ inputs.bundleId }}" --web-dir=dist --pkg-manager=npm --skip-deps
+
+          # Capacitor config pointing to your site (remote loading)
+          cat > capacitor.config.ts << 'EOF'
+          import { CapacitorConfig } from '@capacitor/cli'
+          const config: CapacitorConfig = {
+            appId: '${{ inputs.bundleId }}',
+            appName: '${{ inputs.appName }}',
+            webDir: 'dist',
+            bundledWebRuntime: false,
+            server: {
+              url: '${{ inputs.siteUrl }}',
+              cleartext: true
+            },
+            android: {
+              allowMixedContent: true
+            }
           }
+          export default config
           EOF
+
+          # Minimal web dir (won't be used when server.url is set, but kept for completeness)
           mkdir -p dist
-          cat > dist/index.html << 'EOF'
+          cat > dist/index.html << 'HTML'
           <!doctype html>
-          <html><head><meta charset="utf-8"><meta name="v
+          <html>
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+              <title>${{ inputs.appName }}</title>
+              <style>html,body,iframe{margin:0;padding:0;height:100%;width:100%;border:0}body{background:#000}</style>
+            </head>
+            <body>
+              <iframe src="${{ inputs.siteUrl }}" allow="clipboard-read; clipboard-write; geolocation *; camera *; microphone *; autoplay; fullscreen; payment *" sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads"></iframe>
+            </body>
+          </html>
+          HTML
+
+          # Add Android platform
+          npx cap add android
+
+          # Accept all Android SDK licenses
+          yes | sdkmanager --licenses
+
+          # If the site URL is HTTP (not HTTPS), enable cleartext traffic
+          if [[ "${{ inputs.siteUrl }}" == http://* ]]; then
+            MANIFEST="android/app/src/main/AndroidManifest.xml"
+            # Allow cleartext traffic on application
+            sed -i 's/<application /<application android:usesCleartextTraffic="true" /' "$MANIFEST" || true
+            # Also add a network security config to be safe
+            mkdir -p android/app/src/main/res/xml
+            cat > android/app/src/main/res/xml/network_security_config.xml << 'XML'
+            <?xml version="1.0" encoding="utf-8"?>
+            <network-security-config>
+              <base-config cleartextTrafficPermitted="true" />
+            </network-security-config>
+            XML
+            sed -i 's/<application /<application android:networkSecurityConfig="@xml\/network_security_config" /' "$MANIFEST" || true
+          fi
+
+          # Ensure modern SDK levels (Capacitor defaults are usually fine; this just bumps if older)
+          VARS_FILE="android/variables.gradle"
+          if [ -f "$VARS_FILE" ]; then
+            sed -i 's/compileSdkVersion = [0-9]\+/compileSdkVersion = 34/' "$VARS_FILE" || true
+            sed -i 's/targetSdkVersion = [0-9]\+/targetSdkVersion = 34/' "$VARS_FILE" || true
+            sed -i 's/minSdkVersion = [0-9]\+/minSdkVersion = 24/' "$VARS_FILE" || true
+          fi
+
+          # Keep Gradle memory usage reasonable on CI
+          echo "org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8" >> android/gradle.properties
+
+      - name: Build Debug APK
+        working-directory: mobile/android
+        run: ./gradlew clean :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Upload Debug APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: |
+            mobile/android/app/build/outputs/apk/debug/*.apk
+            mobile/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Build Release AAB (unsigned)
+        working-directory: mobile/android
+        run: ./gradlew :app:bundleRelease --no-daemon --stacktrace
+
+      - name: Upload Release AAB (unsigned)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-aab-unsigned
+          path: mobile/android/app/build/outputs/bundle/release/*.aab
+          if-no-files-found: warn
+          retention-days: 7
