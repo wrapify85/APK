@@ -1,67 +1,87 @@
 name: Build Android (Debug)
 
-on: workflow_dispatch: inputs: appName: description: Optional app name required: false default: "" bundleId: description: Optional bundle ID (e.g., com.example.app) required: false default: "" siteUrl: description: Optional site URL to wrap required: false default: ""
+on:
+  workflow_dispatch:
+    inputs:
+      appName:
+        description: "Optional app name"
+        required: false
+        default: ""
+      bundleId:
+        description: "Optional bundle id, e.g. com.example.app"
+        required: false
+        default: ""
+      siteUrl:
+        description: "Optional site url your web app runs on"
+        required: false
+        default: ""
 
-jobs: build-android: runs-on: ubuntu-latest permissions: contents: write actions: write steps: - name: Checkout uses: actions/checkout@v4
+permissions:
+  contents: write
 
-  - name: Setup Node
-    uses: actions/setup-node@v4
-    with:
-      node-version: '20'
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
 
-  - name: Setup Java
-    uses: actions/setup-java@v4
-    with:
-      distribution: 'temurin'
-      java-version: '17'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-  - name: Install dependencies
-    run: npm ci
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
-  # Optional: if inputs were sent, gently update capacitor.config.ts
-  - name: Apply optional inputs to capacitor.config.ts
-    if: ${{ inputs.appName != '' || inputs.bundleId != '' || inputs.siteUrl != '' }}
-    run: |
-      set -e
-      node - <<'EOF'
-      const fs = require('fs');
-      let t = fs.readFileSync('capacitor.config.ts','utf8');
-      const APP_NAME = process.env.APP_NAME || '';
-      const BUNDLE_ID = process.env.BUNDLE_ID || '';
-      const SITE_URL = process.env.SITE_URL || '';
-      if (APP_NAME) t = t.replace(/appName:\s*'[^']*'/, `appName: '${APP_NAME}'`);
-      if (BUNDLE_ID) t = t.replace(/appId:\s*'[^']*'/, `appId: '${BUNDLE_ID}'`);
-      if (SITE_URL) {
-        // ensure server section exists for direct mode
-        if (/server:/.test(t)) {
-          t = t.replace(/server:\s*\{[\s\S]*?\},?/, `server: { url: '${SITE_URL}', cleartext: true },`);
-        } else {
-          t = t.replace(/webDir:\s*'dist',?/, `webDir: 'dist',\n  server: { url: '${SITE_URL}', cleartext: true },`);
-        }
-      }
-      fs.writeFileSync('capacitor.config.ts', t);
-      console.log('Updated capacitor.config.ts with workflow inputs (if provided).');
-      EOF
-    env:
-      APP_NAME: ${{ inputs.appName }}
-      BUNDLE_ID: ${{ inputs.bundleId }}
-      SITE_URL: ${{ inputs.siteUrl }}
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
 
-  - name: Add Android platform
-    run: npx cap add android
+      - name: Install dependencies
+        run: npm ci
 
-  - name: Sync Capacitor
-    run: npx cap sync
+      - name: Ensure Capacitor CLI
+        run: |
+          npm i -D @capacitor/cli
+          npm i @capacitor/core
 
-  - name: Build Android (APK and AAB)
-    run: |
-      cd android
-      ./gradlew assembleDebug bundleDebug
+      - name: Ensure capacitor.config.json and apply inputs
+        env:
+          APP_NAME: ${{ github.event.inputs.appName }}
+          BUNDLE_ID: ${{ github.event.inputs.bundleId }}
+          SITE_URL: ${{ github.event.inputs.siteUrl }}
+        run: |
+          if [ ! -f capacitor.config.json ]; then
+            cat > capacitor.config.json <<'JSON'
+          {
+            "appId": "app.lovable.placeholder",
+            "appName": "Wrap App",
+            "webDir": "dist",
+            "server": { "url": "", "cleartext": true }
+          }
+          JSON
+          fi
+          node -e "const fs=require('fs');const p='capacitor.config.json';const cfg=JSON.parse(fs.readFileSync(p,'utf8'));if(process.env.APP_NAME)cfg.appName=process.env.APP_NAME;if(process.env.BUNDLE_ID)cfg.appId=process.env.BUNDLE_ID;if(process.env.SITE_URL){cfg.server=cfg.server||{};cfg.server.url=process.env.SITE_URL;cfg.server.cleartext=true;}fs.writeFileSync(p,JSON.stringify(cfg,null,2));"
 
-  - name: Upload artifacts
-    uses: actions/upload-artifact@v4
-    with:
-      name: android-artifacts
-      path: |
-        android/app/build/outputs/**/*.apk
-        android/app/build/outputs/**/*.aab
+      - name: Build web
+        run: npm run build
+
+      - name: Add Android platform
+        run: npx cap add android || true
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Build APK (debug)
+        working-directory: android
+        run: ./gradlew assembleDebug
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-artifacts
+          path: |
+            android/app/build/outputs/**/*.apk
+            android/app/build/outputs/**/*.aab
+          if-no-files-found: warn
