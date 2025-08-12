@@ -1,54 +1,73 @@
-github/workflows/android.yml name: Build Android (Debug)
+name: Build Android (Debug)
 
-on: workflow_dispatch: inputs: appName: description: Optional app name required: false default: "" bundleId: description: Optional bundle ID (e.g., com.example.app) required: false default: "" siteUrl: description: Optional site URL to wrap required: false default: ""
+on:
+  workflow_dispatch:
+    inputs:
+      appName:
+        description: Optional app name
+        required: false
+        default: ""
+      bundleId:
+        description: Optional bundle ID (e.g., com.example.app)
+        required: false
+        default: ""
+      siteUrl:
+        description: Optional site URL to wrap
+        required: false
+        default: ""
 
-jobs: build-android: runs-on: ubuntu-latest permissions: contents: write actions: write
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
 
-steps:
-  - name: Checkout
-    uses: actions/checkout@v4
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-  - name: Setup Node
-    uses: actions/setup-node@v4
-    with:
-      node-version: 20
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
-  - name: Setup Java
-    uses: actions/setup-java@v4
-    with:
-      distribution: temurin
-      java-version: 17
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
 
-  - name: Setup Gradle
-    uses: gradle/actions/setup-gradle@v3
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
 
-  - name: Cache npm
-    uses: actions/cache@v4
-    with:
-      path: ~/.npm
-      key: npm-${{ hashFiles('**/package-lock.json') }}
-      restore-keys: |
-        npm-
+      - name: Cache npm
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            npm-
 
-  - name: Install dependencies
-    run: npm ci
+      - name: Install dependencies
+        run: npm ci
 
-  - name: Build web
-    run: npm run build
+      - name: Build web
+        run: npm run build
 
-  - name: Sync Capacitor Android
-    run: |
-      npx cap sync android
-      npx cap update android || true
+      - name: Sync Capacitor Android
+        run: |
+          npx cap sync android
+          npx cap update android || true
 
-  - name: Build APK (Debug)
-    working-directory: android
-    run: ./gradlew assembleDebug
+      - name: Build APK (Debug)
+        working-directory: android
+        run: ./gradlew assembleDebug
 
-  - name: Upload artifact (APK)
-    uses: actions/upload-artifact@v4
-    with:
-      name: app-debug-apk
-      path: android/app/build/outputs/apk/debug/*.apk
-      if-no-files-found: error
-      retention-days: 7
+      - name: Upload artifact (APK)
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 7
