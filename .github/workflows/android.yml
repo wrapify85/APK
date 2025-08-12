@@ -1,0 +1,41 @@
+name: Build Android (Debug)
+
+on: workflow_dispatch:
+
+jobs: build-android: runs-on: ubuntu-latest steps: - name: Checkout uses: actions/checkout@v4
+
+  - name: Setup Node
+    uses: actions/setup-node@v4
+    with:
+      node-version: '20'
+
+  - name: Setup Java
+    uses: actions/setup-java@v4
+    with:
+      distribution: 'temurin'
+      java-version: '17'
+
+  - name: Setup Android SDK
+    uses: android-actions/setup-android@v3
+
+  - name: Install dependencies
+    run: npm ci
+
+  - name: Add Android platform
+    run: npx cap add android
+
+  - name: Sync Capacitor
+    run: npx cap sync
+
+  - name: Build Android (APK/AAB)
+    run: |
+      cd android
+      ./gradlew assembleDebug bundleDebug
+
+  - name: Upload artifacts
+    uses: actions/upload-artifact@v4
+    with:
+      name: android-artifacts
+      path: |
+        android/app/build/outputs/**/*.apk
+        android/app/build/outputs/**/*.aab
