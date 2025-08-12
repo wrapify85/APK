@@ -1,111 +1,70 @@
-name: Android Build (Self-Contained)
+name: Build Android (Self‑Contained)
 
 on:
   workflow_dispatch:
     inputs:
       appName:
-        description: Display name for the app (e.g., Wrap Craft)
+        description: "Display name of your app"
         required: true
-        type: string
+        default: "Wrap Craft"
       bundleId:
-        description: Application ID (e.g., com.yourcompany.wrapcraft)
+        description: "Android applicationId (e.g., com.example.app)"
         required: true
-        type: string
+        default: "app.lovable.wrapcraft"
       siteUrl:
-        description: Web app URL to wrap (must be https://)
+        description: "Your website URL to wrap (https://...)"
         required: true
-        type: string
-
-permissions:
-  contents: read
-  actions: write
+        default: "https://example.com"
 
 jobs:
   build:
+    name: Android APK
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    env:
+      APP_NAME: ${{ inputs.appName }}
+      BUNDLE_ID: ${{ inputs.bundleId }}
+      SITE_URL: ${{ inputs.siteUrl }}
 
     steps:
-      - name: Checkout (not used by build but keeps workspace consistent)
+      - name: Checkout (no repo content required)
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
+          cache: "npm"
 
-      - name: Setup Java (JDK 17 for modern Android Gradle Plugin)
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: '17'
+          distribution: "temurin"
+          java-version: "17"
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Accept Android licenses and install SDK packages
-        shell: bash
+      - name: Install Android SDK packages
         run: |
-          yes | sdkmanager --licenses > /dev/null
-          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+          yes | sdkmanager --licenses
+          sdkmanager "platform-tools" \
+                     "platforms;android-34" "build-tools;34.0.0" \
+                     "platforms;android-33" "build-tools;33.0.2"
 
-      - name: Bootstrap Capacitor wrapper
-        shell: bash
+      - name: Initialize minimal project
         run: |
-          set -euo pipefail
-          mkdir -p wrapper
-          cd wrapper
-
-          # Minimal Node project
-          npm init -y
-
-          # Install Capacitor (CLI, core, and Android)
-          npm install --save-exact @capacitor/core@6 @capacitor/android@6
-          npm install --save-dev --save-exact @capacitor/cli@6
-
-          # Create Capacitor config using workflow inputs
-          cat > capacitor.config.ts << 'EOF'
-          import type { CapacitorConfig } from '@capacitor/cli';
-
-          const config: CapacitorConfig = {
-            appId: '${{ inputs.bundleId }}',
-            appName: '${{ inputs.appName }}',
-            webDir: 'dist',
-            server: {
-              url: '${{ inputs.siteUrl }}',
-              cleartext: true
-            },
-            android: {
-              allowMixedContent: true
-            }
-          };
-
-          export default config;
+          set -e
+          cat > package.json << 'EOF'
+          {
+            "name": "wrap-craft-ci",
+            "version": "1.0.0",
+            "private": true
+          }
           EOF
-
-          # Add Android platform and sync
-          npx cap add android --skip-deps
-          npx cap sync android
-
-      - name: Build Debug APK
-        shell: bash
-        working-directory: wrapper/android
-        run: |
-          set -euo pipefail
-          chmod +x ./gradlew
-          ./gradlew assembleDebug --no-daemon
-
-      # Note: Release AAB typically requires a keystore. Omitted to avoid failures.
-      # If you later add signing, you can enable this:
-      # - name: Build Release AAB
-      #   shell: bash
-      #   working-directory: wrapper/android
-      #   run: ./gradlew bundleRelease --no-daemon
-
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-apk
-          path: |
-            wrapper/android/app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
+          mkdir -p dist
+          cat > dist/index.html << 'EOF'
+          <!doctype html>
+          <html><head><meta charset="utf-8"><meta name="v
