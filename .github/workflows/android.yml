@@ -1,93 +1,51 @@
-name: Build Android (Debug)
+name: Build Android (Self-Contained)
 
 on:
   workflow_dispatch:
     inputs:
       appName:
-        description: "App Name"
+        description: 'App Name'
         required: false
-        default: "My App"
+        default: ''
+        type: string
       bundleId:
-        description: "Bundle ID (e.g. com.example.app)"
+        description: 'Bundle Identifier (e.g., com.example.app)'
         required: false
-        default: "com.example.app"
+        default: ''
+        type: string
       siteUrl:
-        description: "Your site URL (https://...)"
+        description: 'Website URL to wrap (https://...)'
         required: false
-        default: "https://example.com"
+        default: ''
+        type: string
+
+permissions:
+  contents: read
 
 jobs:
-  build-android:
+  android:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: '20'
 
-      - name: Setup Java
+      - name: Setup Java (JDK 17)
         uses: actions/setup-java@v4
         with:
-          distribution: "temurin"
-          java-version: "17"
+          distribution: 'temurin'
+          java-version: '17'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Prepare project (use repo if present, else bootstrap)
+      - name: Accept licenses and install SDK packages
+        shell: bash
         run: |
-          set -euo pipefail
-          if [ -f package.json ]; then
-            echo "Using repository project"
-            npm install
-          else
-            echo "Bootstrapping minimal Capacitor wrapper"
-            npm init -y
-            npm install @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6 @capacitor/status-bar@6 @capacitor/splash-screen@6
-
-            mkdir -p dist
-            cat > dist/index.html << 'EOF'
-            <!doctype html>
-            <html>
-              <head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Capacitor Wrapper</title></head>
-              <body><p>This wrapper loads your site via Capacitor server.url.</p></body>
-            </html>
-            EOF
-
-            cat > capacitor.config.ts << 'EOF'
-            import type { CapacitorConfig } from '@capacitor/cli';
-
-            const config: CapacitorConfig = {
-              appId: '${{ inputs.bundleId }}',
-              appName: '${{ inputs.appName }}',
-              webDir: 'dist',
-              server: { url: '${{ inputs.siteUrl }}', cleartext: true },
-              plugins: { SplashScreen: { launchShowDuration: 0 } }
-            };
-
-            export default config;
-            EOF
-          fi
-
-      - name: Add Android platform (idempotent)
-        run: npx cap add android || true
-
-      - name: Sync Capacitor
-        run: npx cap sync
-
-      - name: Build Android (APK + AAB)
-        run: |
-          cd android
-          ./gradlew --no-daemon assembleDebug
-          ./gradlew --no-daemon bundleDebug
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-artifacts
-          path: |
-            android/app/build/outputs/**/*.apk
-            android/app/build/outputs/**/*.aab
+          set -e
+          yes | sdkmanager --licenses
