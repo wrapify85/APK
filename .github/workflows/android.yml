@@ -1,73 +1,136 @@
-name: Build Android (Debug)
+name: Android Build (Self-Contained)
 
 on:
   workflow_dispatch:
     inputs:
       appName:
-        description: Optional app name
-        required: false
-        default: ""
+        description: App display name
+        required: true
+        default: WrapCraft
       bundleId:
-        description: Optional bundle ID (e.g., com.example.app)
-        required: false
-        default: ""
+        description: Android package name (e.g., com.example.app)
+        required: true
+        default: com.wrapcraft.app
       siteUrl:
-        description: Optional site URL to wrap
+        description: Optional web URL to load inside the app (e.g., https://your-site.com)
         required: false
         default: ""
 
 jobs:
-  build-android:
+  build:
+    name: Build APK
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      actions: write
+    timeout-minutes: 30
 
     steps:
-      - name: Checkout
+      - name: Checkout (repo contents not required for build)
         uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Setup Java
+      - name: Set up Java 17 (Temurin)
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '17'
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
 
-      - name: Cache npm
-        uses: actions/cache@v4
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses
+
+      - name: Set up Node.js 18
+        uses: actions/setup-node@v4
         with:
-          path: ~/.npm
-          key: npm-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            npm-
+          node-version: "18"
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build web
-        run: npm run build
-
-      - name: Sync Capacitor Android
+      - name: Bootstrap minimal Capacitor project
         run: |
-          npx cap sync android
-          npx cap update android || true
+          set -euo pipefail
+          mkdir -p app
+          cd app
 
-      - name: Build APK (Debug)
-        working-directory: android
-        run: ./gradlew assembleDebug
+          # Initialize Node project
+          npm init -y
+          npm pkg set name=android-wrapper version=0.0.1 private=true
 
-      - name: Upload artifact (APK)
+          # Install Capacitor 6 (CLI, core, android)
+          npm install -D @capacitor/cli@6
+          npm install @capacitor/core@6 @capacitor/android@6
+
+          # Minimal web content
+          mkdir -p dist
+          cat > dist/index.html <<'HTML'
+          <!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="UTF-8" />
+              <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+              <title>Loading…</title>
+              <style>
+                html,body{height:100%;margin:0}
+                body{display:flex;align-items:center;justify-content:center;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#111}
+              </style>
+            </head>
+            <body>
+              <div id="app">Launching…</div>
+              <script>
+                (function () {
+                  var siteUrl = "__SITE_URL__";
+                  if (siteUrl && siteUrl.trim()) {
+                    location.replace(siteUrl);
+                  }
+                })();
+              </script>
+            </body>
+          </html>
+          HTML
+
+          # Inject siteUrl into index.html (no-op if empty)
+          sed -i "s|__SITE_URL__|${{ inputs.siteUrl }}|g" dist/index.html
+
+          # Create Capacitor config (JSON) with optional server.url
+          {
+            echo '{'
+            echo '  "appId": "'"${{ inputs.bundleId }}"'",'
+            echo '  "appName": "'"${{ inputs.appName }}"'",'
+            echo '  "webDir": "dist"'
+            if [ -n "${{ inputs.siteUrl }}" ]; then
+              echo '  , "server": { "url": "'"${{ inputs.siteUrl }}"'", "cleartext": true }'
+            fi
+            echo '}'
+          } > capacitor.config.json
+
+          # Add Android platform
+          npx cap add android --no-interactive
+
+          # Ensure the Gradle applicationId matches the provided bundleId (idempotent)
+          sed -i 's/^\(\s*applicationId\s*"\)[^"]*\("\)/\1'${{ inputs.bundleId }}'\2/' android/app/build.gradle || true
+
+          # Make sure cleartext traffic is allowed when using http:// URLs
+          if [ -n "${{ inputs.siteUrl }}" ] && echo "${{ inputs.siteUrl }}" | grep -qi '^http://'; then
+            MANIFEST="android/app/src/main/AndroidManifest.xml"
+            if ! grep -q 'usesCleartextTraffic="true"' "$MANIFEST"; then
+              # Add usesCleartextTraffic="true" to the <application> tag
+              sed -i 's|<application |<application android:usesCleartextTraffic="true" |' "$MANIFEST"
+            fi
+          fi
+
+          # Sync native project
+          npx cap sync android --no-interactive
+
+      - name: Build debug APK
+        working-directory: app/android
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon assembleDebug
+
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug-apk
-          path: android/app/build/outputs/apk/debug/*.apk
+          name: android-apk-debug
+          path: app/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-          retention-days: 7
+
+      - name: Print success message
+        run: echo "APK built successfully. Download the artifact 'android-apk-debug' from this run."
