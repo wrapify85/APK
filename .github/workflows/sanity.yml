@@ -1,0 +1,3 @@
+Sanity on: workflow_dispatch: jobs: ok: runs-on: ubuntu-latest steps:
+name: Print context run: | echo "Actor=${{ github.actor }}" echo "Ref=${{ github.ref }}" echo "Repo=${{ github.repository }}"
+name: Done run: echo "Sanity OK"
