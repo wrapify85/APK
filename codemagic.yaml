@@ -1,0 +1,19 @@
+workflows:
+  build:
+    name: Build iOS and Android
+    environment:
+      vars:
+        SITE_URL: "https://kazderni.com"
+        APP_ID: "com.journey.com"
+        APP_NAME: "Kazderni"
+    scripts:
+      - npm ci
+      - npx cap sync
+      - | # Android
+        (cd android && ./gradlew assembleDebug bundleDebug)
+      - | # iOS (unsigned)
+        (cd ios && xcodebuild -workspace App.xcworkspace -scheme App -configuration Debug -sdk iphoneos -archivePath $PWD/build/App.xcarchive archive)
+    artifacts:
+      - android/app/build/outputs/**/*.apk
+      - android/app/build/outputs/**/*.aab
+      - ios/build/**/*.xcarchive

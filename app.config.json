@@ -1,0 +1,11 @@
+{
+  "serverUrl": "https://kazderni.com",
+  "permissions": {
+    "push": true,
+    "location": true,
+    "camera": false,
+    "microphone": false,
+    "photos": true,
+    "requestPushOnStart": true
+  }
+}
