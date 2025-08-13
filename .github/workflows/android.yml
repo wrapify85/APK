@@ -1,45 +1,46 @@
-name: Android Build (Lovable Capacitor)
+name: Android Build (Capacitor Minimal)
 
 on:
   workflow_dispatch:
     inputs:
       appName:
-        description: App name (display name)
-        required: false
-        default: Lovable Wrapper
+        description: "App display name"
+        required: true
+        type: string
       bundleId:
-        description: Application ID (e.g., com.example.app)
-        required: false
-        default: app.lovable.wrapper
+        description: "App bundle ID (e.g. com.example.app)"
+        required: true
+        type: string
       siteUrl:
-        description: Website your wrapper should open
+        description: "Optional server URL to load (e.g. https://example.com)"
         required: false
-        default: https://example.com
-
-# Ensure the token can upload artifacts and access actions
-permissions:
-  contents: read
-  actions: write
-
-concurrency:
-  group: android-build-${{ github.ref }}
-  cancel-in-progress: false
+        type: string
+        default: ""
+      buildType:
+        description: "Output type: apk (debug) or aab (release)"
+        required: true
+        type: choice
+        options:
+          - apk
+          - aab
+        default: apk
 
 jobs:
-  build-android:
-    name: Build Android
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
+    concurrency:
+      group: android-build-${{ github.ref }}
+      cancel-in-progress: false
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node (no cache)
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: '20'  # LTS; no "cache" input so no lockfile required
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -50,84 +51,92 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Scaffold minimal Capacitor project
-        shell: bash
+      - name: Scaffold Capacitor project
         run: |
           set -euo pipefail
-          mkdir -p app && cd app
+          mkdir -p app
+          cd app
 
-          # Minimal package
-          npm init -y
-          npm pkg set name="lovable-capacitor-app" version="1.0.0"
-
-          # Capacitor deps
-          npm i -D @capacitor/cli@latest
-          npm i @capacitor/core@latest @capacitor/android@latest
-
-          # Minimal web assets
-          mkdir -p dist
-          cat > dist/index.html << 'EOF'
-          <!doctype html>
-          <html>
-            <head>
-              <meta charset="utf-8" />
-              <meta name="viewport" content="width=device-width, initial-scale=1" />
-              <title>Wrapper</title>
-              <style>html,body{margin:0;padding:0;height:100%}iframe{border:0;width:100vw;height:100vh;display:block}</style>
-            </head>
-            <body>
-              <iframe src="%SITE_URL%"></iframe>
-            </body>
-          </html>
+          # Minimal package.json with Capacitor
+          cat > package.json << 'EOF'
+          {
+            "name": "cap-minimal",
+            "version": "1.0.0",
+            "private": true,
+            "scripts": {
+              "build": "mkdir -p dist && node -e \"const fs=require('fs');fs.writeFileSync('dist/index.html','<!doctype html><html><head><meta charset=\\\"utf-8\\\"><meta name=\\\"viewport\\\" content=\\\"width=device-width,initial-scale=1\\\"><title>Capacitor</title></head><body style=\\\"font-family:sans-serif;padding:24px\\\"><h1>'+process.env.APP_NAME+'</h1><p>Capacitor wrapper loading '+(process.env.SITE_URL||'local dist')+'</p></body></html>')\"",
+              "postinstall": "npm run build"
+            },
+            "dependencies": {
+              "@capacitor/core": "^6.1.2"
+            },
+            "devDependencies": {
+              "@capacitor/cli": "^6.1.2"
+            }
+          }
           EOF
-          sed -i "s|%SITE_URL%|${{ inputs.siteUrl || 'https://example.com' }}|g" dist/index.html
 
-          # Capacitor config
+          export APP_NAME="${{ github.event.inputs.appName }}"
+          export SITE_URL="${{ github.event.inputs.siteUrl }}"
+
+          npm install
+
+          # Initialize Capacitor
+          npx cap init "${{ github.event.inputs.appName }}" "${{ github.event.inputs.bundleId }}" --web-dir=dist --yes
+
+          # Capacitor config with optional server.url
           cat > capacitor.config.ts << 'EOF'
           import type { CapacitorConfig } from '@capacitor/cli';
-
           const config: CapacitorConfig = {
-            appId: '%APP_ID%',
-            appName: '%APP_NAME%',
+            appId: '${{ github.event.inputs.bundleId }}',
+            appName: '${{ github.event.inputs.appName }}',
             webDir: 'dist',
             server: {
-              url: '%SITE_URL%',
+              url: '${{ github.event.inputs.siteUrl }}',
               cleartext: true
+            },
+            android: {
+              allowMixedContent: true
             }
           };
-
           export default config;
           EOF
-          sed -i "s|%APP_ID%|${{ inputs.bundleId || 'app.lovable.wrapper' }}|g" capacitor.config.ts
-          sed -i "s|%APP_NAME%|${{ inputs.appName || 'Lovable Wrapper' }}|g" capacitor.config.ts
-          sed -i "s|%SITE_URL%|${{ inputs.siteUrl || 'https://example.com' }}|g" capacitor.config.ts
 
-          # Add Android platform (non-interactive)
-          npx cap add android --skip-deps
+          # Add Android platform
+          npx cap add android --yes
 
-          # Increase Gradle memory to avoid OOM
-          sed -i 's/^org\.gradle\.jvmargs=.*/org.gradle.jvmargs=-Xmx3g -Dkotlin.daemon.jvm.options=-Xmx2g/' android/gradle.properties || true
+          # Gradle tweaks
+          {
+            echo "org.gradle.jvmargs=-Xmx3g -Dkotlin.daemon.jvm.options=-Xmx3g"
+            echo "android.useAndroidX=true"
+            echo "android.enableJetifier=true"
+          } >> android/gradle.properties
 
-      - name: Build Debug APK
+      - name: Build Android
         working-directory: app/android
-        run: ./gradlew --no-daemon assembleDebug
-
-      - name: Try build Release AAB (optional)
-        working-directory: app/android
-        run: ./gradlew --no-daemon bundleRelease
-        continue-on-error: true
+        env:
+          GRADLE_OPTS: -Dorg.gradle.daemon=false
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon clean
+          if [ "${{ github.event.inputs.buildType }}" = "aab" ]; then
+            ./gradlew bundleRelease
+          else
+            ./gradlew assembleDebug
+          fi
 
       - name: Upload APK artifact
+        if: ${{ github.event.inputs.buildType != 'aab' }}
         uses: actions/upload-artifact@v4
         with:
           name: app-debug-apk
-          path: app/android/app/build/outputs/apk/debug/app-debug.apk
+          path: app/android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
-      - name: Upload AAB artifact (if exists)
-        if: always()
+      - name: Upload AAB artifact
+        if: ${{ github.event.inputs.buildType == 'aab' }}
         uses: actions/upload-artifact@v4
         with:
           name: app-release-aab
           path: app/android/app/build/outputs/bundle/release/*.aab
-          if-no-files-found: ignore
+          if-no-files-found: error
