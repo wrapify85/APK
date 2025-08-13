@@ -121,9 +121,10 @@ jobs:
             npm install @capacitor/push-notifications@^6.0.0 --no-fund --no-audit
           fi
 
-      - name: Create index.html
+      - name: Create web directory and index.html
         run: |
-          cat > index.html << 'EOF'
+          mkdir -p dist
+          cat > dist/index.html << 'EOF'
           <!DOCTYPE html>
           <html lang="en">
           <head>
@@ -153,7 +154,7 @@ jobs:
           const config = {
             appId: '${{ inputs.bundleId }}',
             appName: '${{ inputs.appName }}',
-            webDir: '.',
+            webDir: 'dist',
             server: {
               androidScheme: 'https'
             },
@@ -176,11 +177,11 @@ jobs:
       - name: Initialize Capacitor project
         run: |
           echo "Initializing Capacitor project..."
-          npx cap init --web-dir=. || exit 1
+          npx cap init "${{ inputs.appName }}" "${{ inputs.bundleId }}" --web-dir=dist
           echo "Adding Android platform..."
-          npx cap add android || exit 1
+          npx cap add android
           echo "Syncing Capacitor..."
-          npx cap sync || exit 1
+          npx cap sync
 
       - name: Apply branding colors
         run: |
