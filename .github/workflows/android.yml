@@ -1,4 +1,4 @@
-name: Build Android APK/AAB with Enhanced Wizard Config
+name: Build Android APK/AAB
 
 on:
   workflow_dispatch:
@@ -15,10 +15,39 @@ on:
         description: 'Site URL'
         required: true
         type: string
-      config:
-        description: 'Full wizard configuration (JSON)'
-        required: true
+      navigationMode:
+        description: 'Navigation Mode'
+        required: false
         type: string
+        default: 'direct'
+      enableTabs:
+        description: 'Enable Tabs'
+        required: false
+        type: boolean
+        default: false
+      primaryHex:
+        description: 'Primary Color'
+        required: false
+        type: string
+        default: '#000000'
+      accentHex:
+        description: 'Accent Color'
+        required: false
+        type: string
+        default: '#FFFFFF'
+      iconPath:
+        description: 'Icon Asset Path'
+        required: false
+        type: string
+      splashPath:
+        description: 'Splash Asset Path'
+        required: false
+        type: string
+      permissionPush:
+        description: 'Push Notifications Permission'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   build-android:
@@ -37,12 +66,164 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
-          
-      - name: Parse Configuration
-        id: parse_config
+
+      - name: Create assets directory
+        run: mkdir -p assets
+
+      - name: Download assets from GitHub
+        if: ${{ inputs.iconPath != '' || inputs.splashPath != '' }}
         run: |
-          echo "Parsing wizard configuration..."
-          CONFIG='${{ inputs.config }}'
-          echo "Received config: $CONFIG"
+          if [ -n "${{ inputs.iconPath }}" ]; then
+            echo "Downloading icon from ${{ inputs.iconPath }}"
+            curl -L -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                 -H "Accept: application/vnd.github.v3.raw" \
+                 "https://api.github.com/repos/${{ github.repository }}/contents/${{ inputs.iconPath }}" \
+                 -o "assets/icon.png"
+          fi
           
-          # Parse navigati
+          if [ -n "${{ inputs.splashPath }}" ]; then
+            echo "Downloading splash from ${{ inputs.splashPath }}"
+            curl -L -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                 -H "Accept: application/vnd.github.v3.raw" \
+                 "https://api.github.com/repos/${{ github.repository }}/contents/${{ inputs.splashPath }}" \
+                 -o "assets/splash.png"
+          fi
+
+      - name: Install Capacitor
+        run: |
+          npm install -g @capacitor/cli
+          npm install @capacitor/core @capacitor/android @capacitor/splash-screen @capacitor/status-bar
+          
+          if [ "${{ inputs.permissionPush }}" = "true" ]; then
+            npm install @capacitor/push-notifications
+          fi
+
+      - name: Create index.html
+        run: |
+          cat > index.html << 'EOF'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>${{ inputs.appName }}</title>
+              <style>
+                  * { margin: 0; padding: 0; box-sizing: border-box; }
+                  body, html { height: 100%; overflow: hidden; }
+                  .webview-container { width: 100%; height: 100vh; border: none; }
+              </style>
+          </head>
+          <body>
+              <iframe class="webview-container" src="${{ inputs.siteUrl }}"></iframe>
+              <script>
+                  document.addEventListener('DOMContentLoaded', function() {
+                      console.log('App loaded successfully');
+                  });
+              </script>
+          </body>
+          </html>
+          EOF
+
+      - name: Create Capacitor config
+        run: |
+          cat > capacitor.config.ts << 'EOF'
+          import { CapacitorConfig } from '@capacitor/cli';
+          
+          const config: CapacitorConfig = {
+            appId: '${{ inputs.bundleId }}',
+            appName: '${{ inputs.appName }}',
+            webDir: '.',
+            server: {
+              androidScheme: 'https'
+            },
+            plugins: {
+              SplashScreen: {
+                backgroundColor: '${{ inputs.primaryHex }}',
+                showSpinner: false,
+                androidSplashResourceName: 'splash'
+              },
+              StatusBar: {
+                style: 'DARK',
+                backgroundColor: '${{ inputs.primaryHex }}'
+              }
+            }
+          };
+          
+          export default config;
+          EOF
+
+      - name: Create package.json
+        run: |
+          cat > package.json << 'EOF'
+          {
+            "name": "${{ inputs.appName }}",
+            "version": "1.0.0",
+            "dependencies": {
+              "@capacitor/android": "latest",
+              "@capacitor/core": "latest",
+              "@capacitor/splash-screen": "latest",
+              "@capacitor/status-bar": "latest"
+            }
+          }
+          EOF
+
+      - name: Initialize Capacitor project
+        run: |
+          npm install
+          npx cap add android
+          npx cap sync
+
+      - name: Apply branding colors
+        run: |
+          mkdir -p android/app/src/main/res/values
+          cat > android/app/src/main/res/values/colors.xml << EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <color name="colorPrimary">${{ inputs.primaryHex }}</color>
+              <color name="colorAccent">${{ inputs.accentHex }}</color>
+              <color name="ic_launcher_background">${{ inputs.primaryHex }}</color>
+          </resources>
+          EOF
+
+      - name: Copy custom assets
+        run: |
+          if [ -f "assets/icon.png" ]; then
+            mkdir -p android/app/src/main/res/mipmap-hdpi
+            mkdir -p android/app/src/main/res/mipmap-mdpi
+            mkdir -p android/app/src/main/res/mipmap-xhdpi
+            mkdir -p android/app/src/main/res/mipmap-xxhdpi
+            mkdir -p android/app/src/main/res/mipmap-xxxhdpi
+            
+            # Copy to all density folders (in production, these should be properly resized)
+            cp assets/icon.png android/app/src/main/res/mipmap-hdpi/ic_launcher.png
+            cp assets/icon.png android/app/src/main/res/mipmap-mdpi/ic_launcher.png
+            cp assets/icon.png android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
+            cp assets/icon.png android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+            cp assets/icon.png android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          fi
+          
+          if [ -f "assets/splash.png" ]; then
+            mkdir -p android/app/src/main/res/drawable
+            cp assets/splash.png android/app/src/main/res/drawable/splash.png
+          fi
+
+      - name: Build APK and AAB
+        run: |
+          cd android
+          ./gradlew assembleRelease
+          ./gradlew bundleRelease
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
+
+      - name: Upload AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-aab
+          path: android/app/build/outputs/bundle/release/app-release.aab
+
+      - name: Clean up
+        run: rm -rf assets
