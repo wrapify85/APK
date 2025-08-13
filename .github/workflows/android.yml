@@ -148,10 +148,8 @@ jobs:
 
       - name: Create Capacitor config
         run: |
-          cat > capacitor.config.ts << 'EOF'
-          import { CapacitorConfig } from '@capacitor/cli';
-          
-          const config: CapacitorConfig = {
+          cat > capacitor.config.js << 'EOF'
+          const config = {
             appId: '${{ inputs.bundleId }}',
             appName: '${{ inputs.appName }}',
             webDir: '.',
@@ -171,7 +169,7 @@ jobs:
             }
           };
           
-          export default config;
+          module.exports = config;
           EOF
 
       - name: Initialize Capacitor project
