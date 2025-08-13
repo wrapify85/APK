@@ -60,6 +60,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
           
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -89,13 +90,34 @@ jobs:
                  -o "assets/splash.png"
           fi
 
-      - name: Install Capacitor
+      - name: Create package.json with all dependencies
         run: |
-          npm install -g @capacitor/cli
-          npm install @capacitor/core @capacitor/android @capacitor/splash-screen @capacitor/status-bar
+          cat > package.json << 'EOF'
+          {
+            "name": "${{ inputs.appName }}",
+            "version": "1.0.0",
+            "scripts": {
+              "build": "echo 'Build complete'"
+            },
+            "dependencies": {
+              "@capacitor/android": "^6.0.0",
+              "@capacitor/core": "^6.0.0",
+              "@capacitor/splash-screen": "^6.0.0",
+              "@capacitor/status-bar": "^6.0.0"
+            },
+            "devDependencies": {
+              "@capacitor/cli": "^6.0.0"
+            }
+          }
+          EOF
+
+      - name: Install dependencies
+        run: |
+          npm cache clean --force
+          npm install --no-fund --no-audit
           
           if [ "${{ inputs.permissionPush }}" = "true" ]; then
-            npm install @capacitor/push-notifications
+            npm install @capacitor/push-notifications@^6.0.0 --no-fund --no-audit
           fi
 
       - name: Create index.html
@@ -152,26 +174,14 @@ jobs:
           export default config;
           EOF
 
-      - name: Create package.json
-        run: |
-          cat > package.json << 'EOF'
-          {
-            "name": "${{ inputs.appName }}",
-            "version": "1.0.0",
-            "dependencies": {
-              "@capacitor/android": "latest",
-              "@capacitor/core": "latest",
-              "@capacitor/splash-screen": "latest",
-              "@capacitor/status-bar": "latest"
-            }
-          }
-          EOF
-
       - name: Initialize Capacitor project
         run: |
-          npm install
-          npx cap add android
-          npx cap sync
+          echo "Initializing Capacitor project..."
+          npx cap init --web-dir=. || exit 1
+          echo "Adding Android platform..."
+          npx cap add android || exit 1
+          echo "Syncing Capacitor..."
+          npx cap sync || exit 1
 
       - name: Apply branding colors
         run: |
@@ -188,6 +198,7 @@ jobs:
       - name: Copy custom assets
         run: |
           if [ -f "assets/icon.png" ]; then
+            echo "Copying custom icon..."
             mkdir -p android/app/src/main/res/mipmap-hdpi
             mkdir -p android/app/src/main/res/mipmap-mdpi
             mkdir -p android/app/src/main/res/mipmap-xhdpi
@@ -203,27 +214,45 @@ jobs:
           fi
           
           if [ -f "assets/splash.png" ]; then
+            echo "Copying custom splash screen..."
             mkdir -p android/app/src/main/res/drawable
             cp assets/splash.png android/app/src/main/res/drawable/splash.png
           fi
 
+      - name: Make gradlew executable
+        run: |
+          cd android
+          chmod +x gradlew
+
       - name: Build APK and AAB
         run: |
           cd android
-          ./gradlew assembleRelease
-          ./gradlew bundleRelease
+          echo "Building APK..."
+          ./gradlew assembleRelease --no-daemon --stacktrace
+          echo "Building AAB..."
+          ./gradlew bundleRelease --no-daemon --stacktrace
+
+      - name: Verify build outputs
+        run: |
+          echo "Checking for APK..."
+          ls -la android/app/build/outputs/apk/release/ || echo "APK directory not found"
+          echo "Checking for AAB..."
+          ls -la android/app/build/outputs/bundle/release/ || echo "AAB directory not found"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: android-apk
           path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
 
       - name: Upload AAB
         uses: actions/upload-artifact@v4
         with:
           name: android-aab
           path: android/app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
 
       - name: Clean up
+        if: always()
         run: rm -rf assets
