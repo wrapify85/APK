@@ -1,4 +1,4 @@
-name: Build Android APK/AAB
+name: Build Android
 
 on:
   workflow_dispatch:
@@ -6,13 +6,13 @@ on:
       appName:
         description: 'App Name'
         required: true
-        default: 'My App'
+        default: 'WrapCraft App'
       bundleId:
         description: 'Bundle ID'
         required: true
-        default: 'com.example.app'
+        default: 'com.wrapcraft.app'
       siteUrl:
-        description: 'Site URL'
+        description: 'Site URL to wrap'
         required: true
         default: 'https://example.com'
       buildType:
@@ -21,211 +21,141 @@ on:
         default: 'apk'
         type: choice
         options:
-          - apk
-          - aab
+        - apk
+        - aab
 
 jobs:
   build:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-
-    - name: Set up JDK 11
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'temurin'
-        java-version: '11'
 
     - name: Set up Node.js
       uses: actions/setup-node@v4
       with:
         node-version: '18'
 
-    - name: Set JAVA_HOME
-      run: |
-        echo "JAVA_HOME=$JAVA_HOME" >> $GITHUB_ENV
-        echo "Java version: $(java -version)"
-        echo "JAVA_HOME is: $JAVA_HOME"
+    - name: Set up Java 17
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
 
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
-      with:
-        api-level: 33
-        build-tools: 33.0.0
 
-    - name: Create project directory
-      run: mkdir -p android-app && cd android-app
-
-    - name: Initialize npm project
-      working-directory: android-app
+    - name: Create Capacitor project
       run: |
+        # Install Capacitor CLI globally
+        npm install -g @capacitor/cli@5.7.8
+        npm install -g @capacitor/core@5.7.8
+        
+        # Create a new project directory
+        mkdir mobile-app
+        cd mobile-app
+        
+        # Initialize npm project
         npm init -y
-        npm install @capacitor/core@latest @capacitor/cli@latest @capacitor/android@latest
-
-    - name: Initialize Capacitor
-      working-directory: android-app
-      run: |
+        
+        # Install Capacitor dependencies with specific versions for Java 17 compatibility
+        npm install @capacitor/core@5.7.8 @capacitor/cli@5.7.8
+        npm install @capacitor/android@5.7.8
+        
+        # Initialize Capacitor
         npx cap init "${{ github.event.inputs.appName }}" "${{ github.event.inputs.bundleId }}" --web-dir=www
-
-    - name: Create web directory and index.html
-      working-directory: android-app
-      run: |
+        
+        # Create www directory and basic HTML
         mkdir -p www
         cat > www/index.html << 'EOF'
         <!DOCTYPE html>
         <html>
         <head>
             <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>${{ github.event.inputs.appName }}</title>
-            <meta name="format-detection" content="telephone=no">
-            <meta name="msapplication-tap-highlight" content="no">
-            <meta name="viewport" content="initial-scale=1, width=device-width, viewport-fit=cover">
             <style>
-                * { margin: 0; padding: 0; box-sizing: border-box; }
-                html, body { height: 100%; overflow: hidden; }
-                iframe { width: 100%; height: 100%; border: none; }
+                body, html {
+                    margin: 0;
+                    padding: 0;
+                    height: 100%;
+                    overflow: hidden;
+                }
+                iframe {
+                    width: 100%;
+                    height: 100%;
+                    border: none;
+                }
             </style>
         </head>
         <body>
             <iframe src="${{ github.event.inputs.siteUrl }}" allow="camera; microphone; geolocation"></iframe>
-            <script src="capacitor.js"></script>
         </body>
         </html>
         EOF
 
     - name: Add Android platform
-      working-directory: android-app
-      run: npx cap add android
-
-    - name: Create gradle.properties
-      working-directory: android-app/android
       run: |
-        cat > gradle.properties << 'EOF'
+        cd mobile-app
+        npx cap add android
+
+    - name: Configure Gradle for Java 17
+      run: |
+        cd mobile-app
+        
+        # Create gradle.properties to force Java 17 compatibility
+        cat > android/gradle.properties << 'EOF'
         android.useAndroidX=true
         android.enableJetifier=true
-        org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=512m
-        org.gradle.daemon=false
-        android.compileSdkVersion=33
-        android.targetSdkVersion=33
-        android.buildToolsVersion=33.0.0
+        org.gradle.jvmargs=-Xmx2048M -Dkotlin.daemon.jvm.options\="-Xmx2048M"
+        
+        # Force Java 17 compatibility
+        org.gradle.java.home=$JAVA_HOME
+        java.sourceCompatibility=17
+        java.targetCompatibility=17
         EOF
+        
+        # Update build.gradle to ensure Java 17 compatibility
+        sed -i 's/compileSdk [0-9]*/compileSdk 34/' android/app/build.gradle
+        sed -i 's/targetSdk [0-9]*/targetSdk 34/' android/app/build.gradle
+        sed -i 's/minSdk [0-9]*/minSdk 22/' android/app/build.gradle
+        
+        # Ensure compileOptions use Java 17
+        if ! grep -q "compileOptions" android/app/build.gradle; then
+            sed -i '/android {/a\    compileOptions {\n        sourceCompatibility JavaVersion.VERSION_17\n        targetCompatibility JavaVersion.VERSION_17\n    }' android/app/build.gradle
+        fi
 
-    - name: Update build.gradle (app level)
-      working-directory: android-app/android/app
+    - name: Set JAVA_HOME and build
       run: |
-        cat > build.gradle << 'EOF'
-        apply plugin: 'com.android.application'
+        cd mobile-app
+        
+        # Explicitly set JAVA_HOME
+        export JAVA_HOME=$JAVA_HOME_17_X64
+        echo "JAVA_HOME set to: $JAVA_HOME"
+        java -version
+        
+        # Sync Capacitor
+        npx cap sync android
+        
+        # Build the Android app
+        cd android
+        if [ "${{ github.event.inputs.buildType }}" = "aab" ]; then
+          ./gradlew bundleRelease
+        else
+          ./gradlew assembleRelease
+        fi
 
-        android {
-            compileSdkVersion 33
-            buildToolsVersion "33.0.0"
-            
-            defaultConfig {
-                applicationId "${{ github.event.inputs.bundleId }}"
-                minSdkVersion 22
-                targetSdkVersion 33
-                versionCode 1
-                versionName "1.0"
-                testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
-            }
-            
-            buildTypes {
-                release {
-                    minifyEnabled false
-                    proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
-                }
-            }
-            
-            compileOptions {
-                sourceCompatibility JavaVersion.VERSION_11
-                targetCompatibility JavaVersion.VERSION_11
-            }
-        }
-
-        repositories {
-            google()
-            mavenCentral()
-        }
-
-        dependencies {
-            implementation 'androidx.appcompat:appcompat:1.6.1'
-            implementation 'com.getcapacitor:capacitor-android:5.+'
-        }
-
-        apply from: 'capacitor.build.gradle'
-        EOF
-
-    - name: Update build.gradle (project level)
-      working-directory: android-app/android
-      run: |
-        cat > build.gradle << 'EOF'
-        buildscript {
-            repositories {
-                google()
-                mavenCentral()
-            }
-            dependencies {
-                classpath 'com.android.tools.build:gradle:7.4.2'
-            }
-        }
-
-        apply from: "variables.gradle"
-
-        allprojects {
-            repositories {
-                google()
-                mavenCentral()
-            }
-        }
-
-        task clean(type: Delete) {
-            delete rootProject.buildDir
-        }
-        EOF
-
-    - name: Sync Capacitor
-      working-directory: android-app
-      run: npx cap sync android
-
-    - name: Make gradlew executable
-      working-directory: android-app/android
-      run: chmod +x gradlew
-
-    - name: Clean project
-      working-directory: android-app/android
-      run: ./gradlew clean
-
-    - name: Build APK
-      if: github.event.inputs.buildType == 'apk' || github.event.inputs.buildType == ''
-      working-directory: android-app/android
-      run: ./gradlew assembleRelease
-
-    - name: Build AAB
-      if: github.event.inputs.buildType == 'aab'
-      working-directory: android-app/android
-      run: ./gradlew bundleRelease
-
-    - name: Upload APK Artifact
+    - name: Upload APK artifact
       if: github.event.inputs.buildType == 'apk' || github.event.inputs.buildType == ''
       uses: actions/upload-artifact@v4
       with:
         name: android-apk
-        path: android-app/android/app/build/outputs/apk/release/*.apk
+        path: mobile-app/android/app/build/outputs/apk/release/*.apk
 
-    - name: Upload AAB Artifact
+    - name: Upload AAB artifact
       if: github.event.inputs.buildType == 'aab'
       uses: actions/upload-artifact@v4
       with:
         name: android-aab
-        path: android-app/android/app/build/outputs/bundle/release/*.aab
-
-    - name: Upload build logs on failure
-      if: failure()
-      uses: actions/upload-artifact@v4
-      with:
-        name: build-logs
-        path: |
-          android-app/android/app/build/reports/
-          android-app/android/app/build/outputs/logs/
+        path: mobile-app/android/app/build/outputs/bundle/release/*.aab
