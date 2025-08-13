@@ -1,142 +1,120 @@
-name: Android Build (Capacitor Minimal)
+name: Build Android APK/AAB
 
 on:
   workflow_dispatch:
     inputs:
       appName:
-        description: "App display name"
+        description: 'App name'
         required: true
-        type: string
+        default: 'WrapCraft'
       bundleId:
-        description: "App bundle ID (e.g. com.example.app)"
+        description: 'Bundle ID'
         required: true
-        type: string
+        default: 'com.wrapcraft.app'
       siteUrl:
-        description: "Optional server URL to load (e.g. https://example.com)"
-        required: false
-        type: string
-        default: ""
-      buildType:
-        description: "Output type: apk (debug) or aab (release)"
+        description: 'Site URL'
         required: true
+        default: 'https://example.com'
+      buildType:
+        description: 'Build type'
+        required: true
+        default: 'apk'
         type: choice
         options:
-          - apk
-          - aab
-        default: apk
+        - apk
+        - aab
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    concurrency:
-      group: android-build-${{ github.ref }}
-      cancel-in-progress: false
-
+    
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node (no cache)
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'  # LTS; no "cache" input so no lockfile required
-
-      - name: Setup Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Scaffold Capacitor project
-        run: |
-          set -euo pipefail
-          mkdir -p app
-          cd app
-
-          # Minimal package.json with Capacitor
-          cat > package.json << 'EOF'
-          {
-            "name": "cap-minimal",
-            "version": "1.0.0",
-            "private": true,
-            "scripts": {
-              "build": "mkdir -p dist && node -e \"const fs=require('fs');fs.writeFileSync('dist/index.html','<!doctype html><html><head><meta charset=\\\"utf-8\\\"><meta name=\\\"viewport\\\" content=\\\"width=device-width,initial-scale=1\\\"><title>Capacitor</title></head><body style=\\\"font-family:sans-serif;padding:24px\\\"><h1>'+process.env.APP_NAME+'</h1><p>Capacitor wrapper loading '+(process.env.SITE_URL||'local dist')+'</p></body></html>')\"",
-              "postinstall": "npm run build"
-            },
-            "dependencies": {
-              "@capacitor/core": "^6.1.2"
-            },
-            "devDependencies": {
-              "@capacitor/cli": "^6.1.2"
-            }
-          }
-          EOF
-
-          export APP_NAME="${{ github.event.inputs.appName }}"
-          export SITE_URL="${{ github.event.inputs.siteUrl }}"
-
-          npm install
-
-          # Initialize Capacitor
-          npx cap init "${{ github.event.inputs.appName }}" "${{ github.event.inputs.bundleId }}" --web-dir=dist --yes
-
-          # Capacitor config with optional server.url
-          cat > capacitor.config.ts << 'EOF'
-          import type { CapacitorConfig } from '@capacitor/cli';
-          const config: CapacitorConfig = {
-            appId: '${{ github.event.inputs.bundleId }}',
-            appName: '${{ github.event.inputs.appName }}',
-            webDir: 'dist',
-            server: {
-              url: '${{ github.event.inputs.siteUrl }}',
-              cleartext: true
-            },
-            android: {
-              allowMixedContent: true
-            }
-          };
-          export default config;
-          EOF
-
-          # Add Android platform
-          npx cap add android --yes
-
-          # Gradle tweaks
-          {
-            echo "org.gradle.jvmargs=-Xmx3g -Dkotlin.daemon.jvm.options=-Xmx3g"
-            echo "android.useAndroidX=true"
-            echo "android.enableJetifier=true"
-          } >> android/gradle.properties
-
-      - name: Build Android
-        working-directory: app/android
-        env:
-          GRADLE_OPTS: -Dorg.gradle.daemon=false
-        run: |
-          set -euo pipefail
-          ./gradlew --no-daemon clean
-          if [ "${{ github.event.inputs.buildType }}" = "aab" ]; then
-            ./gradlew bundleRelease
-          else
-            ./gradlew assembleDebug
-          fi
-
-      - name: Upload APK artifact
-        if: ${{ github.event.inputs.buildType != 'aab' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-debug-apk
-          path: app/android/app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
-
-      - name: Upload AAB artifact
-        if: ${{ github.event.inputs.buildType == 'aab' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-release-aab
-          path: app/android/app/build/outputs/bundle/release/*.aab
-          if-no-files-found: error
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        
+    - name: Setup Java 17
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+        
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+      
+    - name: Create Capacitor project
+      run: |
+        # Create project directory
+        mkdir capacitor-app
+        cd capacitor-app
+        
+        # Initialize npm project
+        npm init -y
+        
+        # Install Capacitor
+        npm install @capacitor/core @capacitor/cli @capacitor/android
+        
+        # Create basic web files
+        mkdir -p www
+        cat > www/index.html << 'EOF'
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>${{ inputs.appName }}</title>
+            <style>
+                body { 
+                    margin: 0; 
+                    padding: 0; 
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                }
+                iframe { 
+                    width: 100vw; 
+                    height: 100vh; 
+                    border: none; 
+                    display: block;
+                }
+            </style>
+        </head>
+        <body>
+            <iframe src="${{ inputs.siteUrl }}" title="${{ inputs.appName }}"></iframe>
+        </body>
+        </html>
+        EOF
+        
+        # Initialize Capacitor
+        npx cap init "${{ inputs.appName }}" "${{ inputs.bundleId }}" --web-dir=www
+        
+        # Add Android platform
+        npx cap add android
+        
+    - name: Build Android
+      run: |
+        cd capacitor-app
+        
+        # Sync web assets
+        npx cap sync android
+        
+        # Build APK or AAB
+        cd android
+        if [ "${{ inputs.buildType }}" = "aab" ]; then
+          ./gradlew bundleRelease
+        else
+          ./gradlew assembleRelease
+        fi
+        
+    - name: Upload APK artifact
+      if: inputs.buildType == 'apk'
+      uses: actions/upload-artifact@v4
+      with:
+        name: android-apk
+        path: capacitor-app/android/app/build/outputs/apk/release/*.apk
+        
+    - name: Upload AAB artifact
+      if: inputs.buildType == 'aab'
+      uses: actions/upload-artifact@v4
+      with:
+        name: android-aab
+        path: capacitor-app/android/app/build/outputs/bundle/release/*.aab
