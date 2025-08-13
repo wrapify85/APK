@@ -117,7 +117,8 @@ jobs:
               "@capacitor/status-bar": "^6.0.0"
             },
             "devDependencies": {
-              "@capacitor/cli": "^6.0.0"
+              "@capacitor/cli": "^6.0.0",
+              "typescript": "^5.0.0"
             }
           }
           EOF
@@ -149,16 +150,10 @@ jobs:
                  -o "assets/splash.png"
           fi
 
-      - name: Initialize Capacitor
+      - name: Create Capacitor config first
         run: |
-          npx cap init "${{ inputs.appName }}" "${{ inputs.bundleId }}"
-
-      - name: Create Capacitor configuration
-        run: |
-          cat > capacitor.config.ts << 'EOF'
-          import { CapacitorConfig } from '@capacitor/cli';
-          
-          const config: CapacitorConfig = {
+          cat > capacitor.config.js << 'EOF'
+          const config = {
             appId: '${{ inputs.bundleId }}',
             appName: '${{ inputs.appName }}',
             webDir: 'www',
@@ -178,13 +173,21 @@ jobs:
             }
           };
           
-          export default config;
+          module.exports = config;
           EOF
+
+      - name: Initialize Capacitor
+        run: |
+          echo "Initializing Capacitor with existing config..."
+          npx cap init "${{ inputs.appName }}" "${{ inputs.bundleId }}" --web-dir=www
 
       - name: Add Android platform and sync
         run: |
+          echo "Adding Android platform..."
           npx cap add android
-          npx cap copy
+          echo "Copying web assets..."
+          npx cap copy android
+          echo "Syncing project..."
           npx cap sync android
 
       - name: Apply branding colors
