@@ -150,10 +150,17 @@ jobs:
                  -o "assets/splash.png"
           fi
 
-      - name: Create Capacitor config first
+      - name: Initialize Capacitor
         run: |
-          cat > capacitor.config.js << 'EOF'
-          const config = {
+          echo "Initializing Capacitor project..."
+          npx cap init "${{ inputs.appName }}" "${{ inputs.bundleId }}" --web-dir=www
+
+      - name: Update Capacitor configuration
+        run: |
+          cat > capacitor.config.ts << 'EOF'
+          import { CapacitorConfig } from '@capacitor/cli';
+          
+          const config: CapacitorConfig = {
             appId: '${{ inputs.bundleId }}',
             appName: '${{ inputs.appName }}',
             webDir: 'www',
@@ -173,13 +180,8 @@ jobs:
             }
           };
           
-          module.exports = config;
+          export default config;
           EOF
-
-      - name: Initialize Capacitor
-        run: |
-          echo "Initializing Capacitor with existing config..."
-          npx cap init "${{ inputs.appName }}" "${{ inputs.bundleId }}" --web-dir=www
 
       - name: Add Android platform and sync
         run: |
