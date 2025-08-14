@@ -81,43 +81,162 @@ jobs:
           <html lang="en">
           <head>
               <meta charset="UTF-8">
-              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
               <title>${{ inputs.appName }}</title>
+              <link rel="icon" type="image/x-icon" href="/favicon.ico">
               <style>
                   * { margin: 0; padding: 0; box-sizing: border-box; }
-                  body, html { height: 100%; overflow: hidden; }
-                  .webview-container { width: 100%; height: 100vh; border: none; }
+                  html, body { height: 100%; overflow: hidden; background: #fff; }
+                  .app-container { 
+                      width: 100%; 
+                      height: 100vh; 
+                      display: flex; 
+                      flex-direction: column;
+                  }
+                  .status-bar { 
+                      height: env(safe-area-inset-top); 
+                      background: ${{ inputs.primaryHex }}; 
+                  }
+                  .webview-frame { 
+                      flex: 1; 
+                      width: 100%; 
+                      border: none; 
+                      background: #fff; 
+                  }
+                  .loading-overlay {
+                      position: absolute;
+                      top: 0; left: 0; right: 0; bottom: 0;
+                      background: ${{ inputs.primaryHex }};
+                      display: flex;
+                      align-items: center;
+                      justify-content: center;
+                      color: white;
+                      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+                      z-index: 1000;
+                  }
+                  .loading-spinner {
+                      width: 40px; height: 40px;
+                      border: 3px solid rgba(255,255,255,0.3);
+                      border-top: 3px solid white;
+                      border-radius: 50%;
+                      animation: spin 1s linear infinite;
+                  }
+                  @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
               </style>
           </head>
           <body>
-              <iframe class="webview-container" src="${{ inputs.siteUrl }}"></iframe>
+              <div class="app-container">
+                  <div class="status-bar"></div>
+                  <iframe 
+                      id="webview" 
+                      class="webview-frame" 
+                      src="${{ inputs.siteUrl }}"
+                      allow="camera; microphone; geolocation; autoplay; encrypted-media; fullscreen"
+                      sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads">
+                  </iframe>
+              </div>
+              <div id="loadingOverlay" class="loading-overlay">
+                  <div>
+                      <div class="loading-spinner"></div>
+                      <div style="margin-top: 20px;">Loading...</div>
+                  </div>
+              </div>
               <script src="capacitor.js"></script>
               <script>
-                  document.addEventListener('DOMContentLoaded', function() {
-                      console.log('App loaded successfully');
+                  // Import Capacitor plugins
+                  const { Capacitor } = window;
+                  const { StatusBar } = window;
+                  const { SplashScreen } = window;
+                  const { App } = window;
+                  
+                  document.addEventListener('DOMContentLoaded', async function() {
+                      console.log('${{ inputs.appName }} initialized');
+                      const loading = document.getElementById('loadingOverlay');
+                      const webview = document.getElementById('webview');
+                      
+                      // Handle webview load
+                      webview.addEventListener('load', function() {
+                          console.log('WebView loaded successfully');
+                          if (loading) loading.style.display = 'none';
+                      });
+                      
+                      // Configure Capacitor plugins
+                      if (Capacitor?.isNativePlatform()) {
+                          console.log('Running on native platform');
+                          
+                          // Configure status bar
+                          if (StatusBar) {
+                              await StatusBar.setBackgroundColor({ color: '${{ inputs.primaryHex }}' });
+                              await StatusBar.setStyle({ style: 'DARK' });
+                          }
+                          
+                          // Hide splash screen after app loads
+                          if (SplashScreen) {
+                              setTimeout(() => SplashScreen.hide(), 1000);
+                          }
+                          
+                          // Handle app state changes
+                          if (App) {
+                              App.addListener('appStateChange', ({ isActive }) => {
+                                  console.log('App state changed. Is active:', isActive);
+                              });
+                              
+                              App.addListener('backButton', ({ canGoBack }) => {
+                                  if (canGoBack) {
+                                      window.history.back();
+                                  } else {
+                                      App.exitApp();
+                                  }
+                              });
+                          }
+                      }
+                      
+                      // Remove loading overlay after timeout
+                      setTimeout(() => {
+                          if (loading) loading.style.display = 'none';
+                      }, 5000);
+                  });
+                  
+                  // Global error handling
+                  window.addEventListener('error', function(e) {
+                      console.error('WebView error:', e.error);
                   });
               </script>
           </body>
           </html>
           EOF
 
-      - name: Create minimal package.json
+      - name: Create comprehensive package.json
         run: |
           cat > package.json << 'EOF'
           {
             "name": "${{ inputs.appName }}",
             "version": "1.0.0",
+            "private": true,
             "scripts": {
-              "build": "echo 'Build complete'"
+              "build": "echo 'Build complete'",
+              "sync": "npx cap sync",
+              "add:android": "npx cap add android",
+              "run:android": "npx cap run android",
+              "configure:permissions": "node scripts/configure-permissions.js"
             },
             "dependencies": {
-              "@capacitor/android": "^6.0.0",
-              "@capacitor/core": "^6.0.0",
-              "@capacitor/splash-screen": "^6.0.0",
-              "@capacitor/status-bar": "^6.0.0"
+              "@capacitor/android": "^6.1.2",
+              "@capacitor/core": "^6.1.2",
+              "@capacitor/splash-screen": "^6.0.1",
+              "@capacitor/status-bar": "^6.0.1",
+              "@capacitor/app": "^6.0.1",
+              "@capacitor/haptics": "^6.0.1",
+              "@capacitor/keyboard": "^6.0.1",
+              "@capacitor/network": "^6.0.1",
+              "@capacitor/geolocation": "^6.0.1",
+              "@capacitor/camera": "^6.0.1",
+              "@capacitor/filesystem": "^6.0.1",
+              "@capacitor/push-notifications": "^6.0.1",
+              "@capacitor/device": "^6.0.1"
             },
             "devDependencies": {
-              "@capacitor/cli": "^6.0.0",
+              "@capacitor/cli": "^6.1.2",
               "typescript": "^5.0.0"
             }
           }
@@ -126,9 +245,7 @@ jobs:
       - name: Install Capacitor and dependencies
         run: |
           npm install --legacy-peer-deps
-          if [ "${{ inputs.permissionPush }}" = "true" ]; then
-            npm install @capacitor/push-notifications@^6.0.0
-          fi
+          echo "Installed all Capacitor dependencies"
 
       - name: Download custom assets
         if: ${{ inputs.iconPath != '' || inputs.splashPath != '' }}
@@ -136,28 +253,44 @@ jobs:
           mkdir -p assets
           if [ -n "${{ inputs.iconPath }}" ]; then
             echo "Downloading icon from ${{ inputs.iconPath }}"
-            curl -L -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-                 -H "Accept: application/vnd.github.v3.raw" \
-                 "https://api.github.com/repos/${{ github.repository }}/contents/${{ inputs.iconPath }}" \
-                 -o "assets/icon.png"
+            # Handle both .github/temp-assets/ paths and regular paths
+            if [[ "${{ inputs.iconPath }}" == .github/temp-assets/* ]]; then
+              curl -L -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                   -H "Accept: application/vnd.github.v3.raw" \
+                   "https://api.github.com/repos/${{ github.repository }}/contents/${{ inputs.iconPath }}" \
+                   -o "assets/icon.png"
+            else
+              curl -L -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                   -H "Accept: application/vnd.github.v3.raw" \
+                   "https://api.github.com/repos/${{ github.repository }}/contents/${{ inputs.iconPath }}" \
+                   -o "assets/icon.png"
+            fi
           fi
           
           if [ -n "${{ inputs.splashPath }}" ]; then
             echo "Downloading splash from ${{ inputs.splashPath }}"
-            curl -L -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-                 -H "Accept: application/vnd.github.v3.raw" \
-                 "https://api.github.com/repos/${{ github.repository }}/contents/${{ inputs.splashPath }}" \
-                 -o "assets/splash.png"
+            # Handle both .github/temp-assets/ paths and regular paths  
+            if [[ "${{ inputs.splashPath }}" == .github/temp-assets/* ]]; then
+              curl -L -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                   -H "Accept: application/vnd.github.v3.raw" \
+                   "https://api.github.com/repos/${{ github.repository }}/contents/${{ inputs.splashPath }}" \
+                   -o "assets/splash.png"
+            else
+              curl -L -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                   -H "Accept: application/vnd.github.v3.raw" \
+                   "https://api.github.com/repos/${{ github.repository }}/contents/${{ inputs.splashPath }}" \
+                   -o "assets/splash.png"
+            fi
           fi
 
-      - name: Initialize Capacitor
+      - name: Initialize Capacitor with Full Configuration
         run: |
-          echo "Initializing Capacitor project..."
+          echo "Initializing comprehensive Capacitor project..."
           # Remove any existing config files to ensure clean init
           rm -f capacitor.config.ts capacitor.config.js capacitor.config.json
           npx cap init "${{ inputs.appName }}" "${{ inputs.bundleId }}" --web-dir=www
           
-          # Now replace with our custom configuration
+          # Create comprehensive Capacitor configuration
           rm -f capacitor.config.ts capacitor.config.js capacitor.config.json
           cat > capacitor.config.ts << 'EOF'
           import { CapacitorConfig } from '@capacitor/cli';
@@ -167,23 +300,86 @@ jobs:
             appName: '${{ inputs.appName }}',
             webDir: 'www',
             server: {
-              androidScheme: 'https'
+              androidScheme: 'https',
+              allowNavigation: ['${{ inputs.siteUrl }}'],
+              cleartext: true
             },
             plugins: {
               SplashScreen: {
+                launchShowDuration: 2000,
+                launchAutoHide: true,
                 backgroundColor: '${{ inputs.primaryHex }}',
+                androidSplashResourceName: 'splash',
+                androidScaleType: 'CENTER_CROP',
                 showSpinner: false,
-                androidSplashResourceName: 'splash'
+                androidSpinnerStyle: 'large',
+                iosSpinnerStyle: 'small',
+                spinnerColor: '#FFFFFF'
               },
               StatusBar: {
                 style: 'DARK',
-                backgroundColor: '${{ inputs.primaryHex }}'
+                backgroundColor: '${{ inputs.primaryHex }}',
+                overlaysWebView: false
+              },
+              App: {
+                disallowOverscroll: true
+              },
+              Keyboard: {
+                resize: 'ionic'
+              },
+              PushNotifications: {
+                presentationOptions: ['badge', 'sound', 'alert']
               }
+            },
+            android: {
+              allowMixedContent: true,
+              captureInput: true,
+              webContentsDebuggingEnabled: false
             }
           };
           
           export default config;
           EOF
+          
+          # Create native permissions configuration script
+          mkdir -p scripts
+          cat > scripts/configure-permissions.js << 'SCRIPT_EOF'
+          const fs = require('fs');
+          const path = require('path');
+          
+          console.log('Configuring native permissions...');
+          
+          // Configure Android permissions
+          const androidManifestPath = 'android/app/src/main/AndroidManifest.xml';
+          if (fs.existsSync(androidManifestPath)) {
+            let manifest = fs.readFileSync(androidManifestPath, 'utf8');
+            
+            const permissions = [
+              'android.permission.INTERNET',
+              'android.permission.ACCESS_NETWORK_STATE',
+              'android.permission.ACCESS_WIFI_STATE'
+            ];
+            
+            if ('${{ inputs.permissionPush }}' === 'true') {
+              permissions.push('android.permission.POST_NOTIFICATIONS');
+              permissions.push('android.permission.WAKE_LOCK');
+            }
+            
+            permissions.forEach(permission => {
+              if (!manifest.includes(permission)) {
+                manifest = manifest.replace(
+                  '<application',
+                  `    <uses-permission android:name="${permission}" />\n    <application`
+                );
+              }
+            });
+            
+            fs.writeFileSync(androidManifestPath, manifest);
+            console.log('✓ Android permissions configured');
+          }
+          
+          console.log('Native permissions configuration complete');
+          SCRIPT_EOF
 
       - name: Add Android platform and sync
         run: |
@@ -193,40 +389,135 @@ jobs:
           npx cap copy android
           echo "Syncing project..."
           npx cap sync android
+          echo "Configuring native permissions..."
+          node scripts/configure-permissions.js
 
-      - name: Apply branding colors
+      - name: Apply comprehensive branding
         run: |
+          echo "Applying comprehensive branding and theming..."
+          
+          # Create colors.xml with full theme
           mkdir -p android/app/src/main/res/values
           cat > android/app/src/main/res/values/colors.xml << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
               <color name="colorPrimary">${{ inputs.primaryHex }}</color>
+              <color name="colorPrimaryDark">${{ inputs.primaryHex }}</color>
               <color name="colorAccent">${{ inputs.accentHex }}</color>
+              <color name="ic_launcher_background">${{ inputs.primaryHex }}</color>
+              <color name="splashscreen_bg">${{ inputs.primaryHex }}</color>
+              <color name="statusbar_color">${{ inputs.primaryHex }}</color>
           </resources>
           EOF
+          
+          # Create styles.xml for proper theming
+          cat > android/app/src/main/res/values/styles.xml << EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar">
+                  <item name="colorPrimary">@color/colorPrimary</item>
+                  <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
+                  <item name="colorAccent">@color/colorAccent</item>
+                  <item name="android:statusBarColor">@color/statusbar_color</item>
+                  <item name="android:navigationBarColor">@color/colorPrimary</item>
+              </style>
+              
+              <style name="AppTheme.NoActionBarLaunch" parent="AppTheme">
+                  <item name="android:windowNoTitle">true</item>
+                  <item name="android:windowActionBar">false</item>
+                  <item name="android:windowFullscreen">false</item>
+                  <item name="android:windowContentOverlay">@null</item>
+                  <item name="android:windowBackground">@drawable/splash</item>
+              </style>
+              
+              <style name="AppTheme.NoActionBar" parent="AppTheme">
+                  <item name="android:windowNoTitle">true</item>
+                  <item name="android:windowActionBar">false</item>
+                  <item name="android:windowFullscreen">false</item>
+                  <item name="android:windowContentOverlay">@null</item>
+              </style>
+          </resources>
+          EOF
+          
+          echo "✓ Branding and theming applied"
 
-      - name: Copy custom assets
+      - name: Copy and optimize custom assets
         run: |
+          echo "Processing custom assets..."
+          
           if [ -f "assets/icon.png" ]; then
-            echo "Copying custom icon..."
-            mkdir -p android/app/src/main/res/mipmap-hdpi
+            echo "Installing ImageMagick for icon processing..."
+            sudo apt-get update && sudo apt-get install -y imagemagick
+            
+            echo "Creating properly sized icons for all densities..."
             mkdir -p android/app/src/main/res/mipmap-mdpi
+            mkdir -p android/app/src/main/res/mipmap-hdpi
             mkdir -p android/app/src/main/res/mipmap-xhdpi
             mkdir -p android/app/src/main/res/mipmap-xxhdpi
             mkdir -p android/app/src/main/res/mipmap-xxxhdpi
             
-            # Copy to all density folders (in production, these should be properly resized)
-            cp assets/icon.png android/app/src/main/res/mipmap-hdpi/ic_launcher.png
-            cp assets/icon.png android/app/src/main/res/mipmap-mdpi/ic_launcher.png
-            cp assets/icon.png android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
-            cp assets/icon.png android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
-            cp assets/icon.png android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+            # Generate properly sized icons for each density
+            convert assets/icon.png -resize 48x48 android/app/src/main/res/mipmap-mdpi/ic_launcher.png
+            convert assets/icon.png -resize 72x72 android/app/src/main/res/mipmap-hdpi/ic_launcher.png
+            convert assets/icon.png -resize 96x96 android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
+            convert assets/icon.png -resize 144x144 android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+            convert assets/icon.png -resize 192x192 android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+            
+            # Also create round icons
+            mkdir -p android/app/src/main/res/mipmap-mdpi
+            mkdir -p android/app/src/main/res/mipmap-hdpi
+            mkdir -p android/app/src/main/res/mipmap-xhdpi
+            mkdir -p android/app/src/main/res/mipmap-xxhdpi
+            mkdir -p android/app/src/main/res/mipmap-xxxhdpi
+            
+            convert assets/icon.png -resize 48x48 android/app/src/main/res/mipmap-mdpi/ic_launcher_round.png
+            convert assets/icon.png -resize 72x72 android/app/src/main/res/mipmap-hdpi/ic_launcher_round.png
+            convert assets/icon.png -resize 96x96 android/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png
+            convert assets/icon.png -resize 144x144 android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png
+            convert assets/icon.png -resize 192x192 android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png
+            
+            echo "✓ Icons generated for all densities"
+          else
+            echo "No custom icon provided, using default"
           fi
           
           if [ -f "assets/splash.png" ]; then
-            echo "Copying custom splash screen..."
+            echo "Processing splash screen..."
             mkdir -p android/app/src/main/res/drawable
+            mkdir -p android/app/src/main/res/drawable-hdpi
+            mkdir -p android/app/src/main/res/drawable-xhdpi
+            mkdir -p android/app/src/main/res/drawable-xxhdpi
+            mkdir -p android/app/src/main/res/drawable-xxxhdpi
+            
+            # Copy splash to drawable folders
             cp assets/splash.png android/app/src/main/res/drawable/splash.png
+            cp assets/splash.png android/app/src/main/res/drawable-hdpi/splash.png
+            cp assets/splash.png android/app/src/main/res/drawable-xhdpi/splash.png
+            cp assets/splash.png android/app/src/main/res/drawable-xxhdpi/splash.png
+            cp assets/splash.png android/app/src/main/res/drawable-xxxhdpi/splash.png
+            
+            # Create splash drawable XML
+            cat > android/app/src/main/res/drawable/splash.xml << EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+              <item android:drawable="@color/splashscreen_bg"/>
+              <item>
+                  <bitmap android:gravity="center" android:src="@drawable/splash"/>
+              </item>
+          </layer-list>
+          EOF
+            
+            echo "✓ Splash screen configured"
+          else
+            echo "No custom splash provided, using default"
+            # Create default splash with brand color
+            mkdir -p android/app/src/main/res/drawable
+            cat > android/app/src/main/res/drawable/splash.xml << EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+              <item android:drawable="@color/splashscreen_bg"/>
+          </layer-list>
+          EOF
           fi
 
       - name: Make gradlew executable
@@ -234,13 +525,91 @@ jobs:
           cd android
           chmod +x gradlew
 
-      - name: Build APK and AAB
+      - name: Configure build and generate signed APK
         run: |
           cd android
-          echo "Building APK..."
-          ./gradlew assembleRelease --no-daemon --stacktrace
-          echo "Building AAB..."
-          ./gradlew bundleRelease --no-daemon --stacktrace
+          
+          echo "Configuring Android build system..."
+          
+          # Generate a debug keystore for development signing
+          keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          
+          # Create comprehensive gradle.properties
+          cat > gradle.properties << EOF
+          android.useAndroidX=true
+          android.enableJetifier=true
+          android.nonTransitiveRClass=false
+          android.defaults.buildfeatures.buildconfig=true
+          android.nonFinalResIds=false
+          org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m
+          org.gradle.parallel=true
+          org.gradle.configureondemand=true
+          org.gradle.daemon=true
+          EOF
+          
+          # Update the build.gradle to add comprehensive configuration
+          cat >> app/build.gradle << 'GRADLE_EOF'
+
+android {
+    signingConfigs {
+        release {
+            storeFile file('../debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
+    
+    buildTypes {
+        debug {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    
+    buildFeatures {
+        buildConfig true
+    }
+    
+    packagingOptions {
+        pickFirst '**/libc++_shared.so'
+        pickFirst '**/libjsc.so'
+    }
+    
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+dependencies {
+    implementation 'androidx.coordinatorlayout:coordinatorlayout:1.2.0'
+    implementation 'androidx.core:core-splashscreen:1.0.1'
+}
+GRADLE_EOF
+          
+          # Ensure proper app name in strings.xml
+          echo "Configuring app metadata..."
+          mkdir -p app/src/main/res/values
+          cat > app/src/main/res/values/strings.xml << EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">${{ inputs.appName }}</string>
+              <string name="title_activity_main">${{ inputs.appName }}</string>
+              <string name="package_name">${{ inputs.bundleId }}</string>
+              <string name="custom_url_scheme">${{ inputs.bundleId }}</string>
+          </resources>
+          EOF
+          
+          echo "Building optimized APK and AAB..."
+          ./gradlew clean
+          ./gradlew assembleRelease --no-daemon --stacktrace --info
+          ./gradlew bundleRelease --no-daemon --stacktrace --info
 
       - name: Verify build outputs
         run: |
