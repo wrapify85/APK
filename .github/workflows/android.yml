@@ -153,10 +153,12 @@ jobs:
       - name: Initialize Capacitor
         run: |
           echo "Initializing Capacitor project..."
+          # Remove any existing config files to ensure clean init
+          rm -f capacitor.config.ts capacitor.config.js capacitor.config.json
           npx cap init "${{ inputs.appName }}" "${{ inputs.bundleId }}" --web-dir=www
-
-      - name: Update Capacitor configuration
-        run: |
+          
+          # Now replace with our custom configuration
+          rm -f capacitor.config.ts capacitor.config.js capacitor.config.json
           cat > capacitor.config.ts << 'EOF'
           import { CapacitorConfig } from '@capacitor/cli';
           
