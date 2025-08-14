@@ -202,7 +202,6 @@ jobs:
           <resources>
               <color name="colorPrimary">${{ inputs.primaryHex }}</color>
               <color name="colorAccent">${{ inputs.accentHex }}</color>
-              <color name="ic_launcher_background">${{ inputs.primaryHex }}</color>
           </resources>
           EOF
 
