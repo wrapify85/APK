@@ -1,0 +1,560 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="msapplication-tap-highlight" content="no" />
+    <title>Kazderni</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { 
+        height: 100%; 
+        overflow: hidden; 
+        background: #ffffff;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      }
+      .app-container { 
+        width: 100%; 
+        height: 100vh; 
+        display: flex; 
+        flex-direction: column;
+        position: relative;
+      }
+      .status-safe-area { 
+        height: env(safe-area-inset-top); 
+        background: #ffffff; 
+      }
+      .webview-frame { 
+        flex: 1; 
+        width: 100%; 
+        border: none; 
+        background: #fff;
+        position: relative;
+      }
+      .loading-overlay {
+        position: absolute;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: #ffffff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        z-index: 1000;
+        transition: opacity 0.3s ease;
+      }
+      .loading-content {
+        text-align: center;
+      }
+      .loading-spinner {
+        width: 40px; height: 40px;
+        border: 3px solid rgba(255,255,255,0.3);
+        border-top: 3px solid white;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 20px;
+      }
+      @keyframes spin { 
+        0% { transform: rotate(0deg); } 
+        100% { transform: rotate(360deg); } 
+      }
+      .nav-tabs {
+        display: none;
+        background: #FFFFFF;
+        padding: 8px 0;
+        justify-content: space-around;
+        border-top: 1px solid rgba(255,255,255,0.1);
+      }
+      
+      
+      .tab-item {
+        color: rgba(255,255,255,0.7);
+        text-decoration: none;
+        padding: 8px 16px;
+        font-size: 12px;
+        border-radius: 4px;
+        transition: all 0.2s ease;
+      }
+      .tab-item.active, .tab-item:hover {
+        color: white;
+        background: rgba(255,255,255,0.1);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app-container">
+      <div class="status-safe-area"></div>
+      <div class="webview-frame">
+        <iframe 
+          id="mainWebView" 
+          src="https://kazderni.com"
+          allow="camera; microphone; geolocation; autoplay; encrypted-media; fullscreen; payment"
+          sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals"
+          style="width: 100%; height: 100%; border: none;">
+        </iframe>
+        <div id="loadingOverlay" class="loading-overlay">
+          <div class="loading-content">
+            <div class="loading-spinner"></div>
+            <div>Loading Kazderni...</div>
+          </div>
+        </div>
+      </div>
+      
+    </div>
+    <script src="capacitor.js"></script>
+    <!-- OneSignal SDK -->
+    <script src="https://cdn.onesignal.com/sdks/OneSignalSDK.js" async=""></script>
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/10.0.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.0.0/firebase-analytics-compat.js"></script>
+    <!-- RevenueCat SDK -->
+    <script src="https://sdk.revenuecat.com/js/2.0.0/revenuecat.min.js"></script>
+    <script>
+      // Import Capacitor core and plugins
+      const { Capacitor } = window;
+      const { StatusBar } = window;
+      const { SplashScreen } = window;
+      const { App } = window;
+      const { Device } = window;
+      const { Network } = window;
+      const { Browser } = window;
+      
+      class NativeWebViewApp {
+        constructor() {
+          this.isNative = Capacitor?.isNativePlatform();
+          this.webview = document.getElementById('mainWebView');
+          this.loading = document.getElementById('loadingOverlay');
+          this.initialized = false;
+          this.navigationHistory = ['/'];
+          this.currentTabIndex = 0;
+          
+          this.init();
+        }
+        
+        async init() {
+          console.log('Kazderni - Native WebView App initializing...');
+          console.log('Platform:', this.isNative ? 'Native' : 'Web');
+          
+          // Configure native features
+          if (this.isNative) {
+            await this.configureNativeFeatures();
+          }
+          
+          // Setup WebView
+          this.setupWebView();
+          
+          // Handle navigation
+          if (false) {
+            this.setupTabNavigation();
+          }
+          
+          // Initialize integrations
+          this.initializeIntegrations();
+          
+          // Mark as initialized
+          this.initialized = true;
+          console.log('Kazderni - Initialization complete');
+        }
+        
+        async configureNativeFeatures() {
+          try {
+             // Configure Status Bar
+            if (StatusBar) {
+              const isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+              const statusColor = '#ffffff';
+              await StatusBar.setBackgroundColor({ color: statusColor });
+              await StatusBar.setStyle({ style: 'DARK' });
+              console.log('✓ Status bar configured');
+            }
+            
+            // Handle Splash Screen
+            if (SplashScreen) {
+              setTimeout(() => {
+                SplashScreen.hide();
+                console.log('✓ Splash screen hidden');
+              }, 2000);
+            }
+            
+            // Setup deep link handling  
+            if (App) {
+              App.addListener('appUrlOpen', (event) => {
+                console.log('App opened via URL:', event.url);
+                this.handleDeepLink(event.url);
+              });
+              
+              App.addListener('appStateChange', ({ isActive }) => {
+                console.log('App state changed. Active:', isActive);
+              });
+              
+              App.addListener('backButton', ({ canGoBack }) => {
+                // Prevent app from closing, handle navigation internally
+                if (this.navigationHistory && this.navigationHistory.length > 1) {
+                  this.handleBackNavigation();
+                } else if (canGoBack) {
+                  window.history.back();
+                } else {
+                  // Stay on current page instead of exiting
+                  console.log('Back button pressed at root - staying on page');
+                }
+              });
+              
+              console.log('✓ App listeners configured');
+            }
+            
+            // Get device info
+            if (Device) {
+              const info = await Device.getInfo();
+              console.log('Device info:', info);
+            }
+            
+            // Check network status
+            if (Network) {
+              const status = await Network.getStatus();
+              console.log('Network status:', status);
+            }
+            
+          } catch (error) {
+            console.error('Error configuring native features:', error);
+          }
+        }
+        
+        // Setup WebView with link interception
+        setupWebView() {
+          this.webview.addEventListener('load', () => {
+            console.log('WebView loaded successfully');
+            this.setupLinkInterception();
+            this.hideLoading();
+          });
+          
+          this.webview.addEventListener('error', (error) => {
+            console.error('WebView error:', error);
+            this.showError('Failed to load content');
+          });
+          
+          // Auto-hide loading after timeout
+          setTimeout(() => {
+            if (this.loading.style.display !== 'none') {
+              this.hideLoading();
+            }
+          }, 10000);
+          
+          
+        }
+
+        // Intercept and handle links within the app
+        setupLinkInterception() {
+          try {
+            const webviewDoc = this.webview.contentDocument;
+            if (!webviewDoc) return;
+            
+            const baseUrl = new URL('https://kazderni.com');
+            const sameDomain = baseUrl.hostname;
+            
+            // Intercept all link clicks
+            webviewDoc.addEventListener('click', (e) => {
+              const link = e.target.closest('a');
+              if (!link || !link.href) return;
+              
+              try {
+                const linkUrl = new URL(link.href);
+                
+                
+                // Handle same domain links within app
+                if (linkUrl.hostname === sameDomain) {
+                  e.preventDefault();
+                  console.log('Navigating within app:', link.href);
+                  this.navigateToUrl(link.href);
+                  return;
+                }
+                
+                // Handle external links with in-app browser
+                if (linkUrl.protocol === 'http:' || linkUrl.protocol === 'https:') {
+                  e.preventDefault();
+                  console.log('Opening external link in-app:', link.href);
+                  this.openInAppBrowser(link.href);
+                  return;
+                }
+                
+                
+                // Let other protocols (tel:, mailto:, etc.) work normally
+              } catch (error) {
+                console.warn('Error processing link:', error);
+              }
+            });
+            
+            console.log('✓ Link interception configured for domain:', sameDomain);
+          } catch (error) {
+            console.warn('Could not setup link interception:', error);
+          }
+        }
+
+        // Navigate to a full URL within the app
+        navigateToUrl(url) {
+          console.log('Navigating to URL:', url);
+          this.webview.src = url;
+          this.showLoading();
+          
+          // Add to navigation history (extract path from URL)
+          try {
+            const urlObj = new URL(url);
+            const path = urlObj.pathname + urlObj.search + urlObj.hash;
+            if (this.navigationHistory[this.navigationHistory.length - 1] !== path) {
+              this.navigationHistory.push(path);
+            }
+          } catch (error) {
+            console.warn('Error processing URL for history:', error);
+          }
+        }
+
+        
+        // Open external links in native in-app browser
+        openInAppBrowser(url) {
+          if (this.isNative && window.Browser) {
+            window.Browser.open({
+              url: url,
+              presentationStyle: 'popover'
+            }).catch(error => {
+              console.error('Error opening in-app browser:', error);
+              // Fallback to system browser
+              window.open(url, '_system');
+            });
+          } else {
+            // Fallback for web or when Browser plugin not available
+            window.open(url, '_blank');
+          }
+        }
+        
+
+        
+        // Handle deep link URLs
+        handleDeepLink(url) {
+          try {
+            console.log('Processing deep link:', url);
+            const urlObj = new URL(url);
+            
+            // Handle different URL schemes
+            if (urlObj.protocol === 'app.kazderni.com:') {
+              // Custom app scheme: myapp://path/to/page
+              const path = urlObj.pathname || '/';
+              console.log('Deep link to path:', path);
+              this.navigateToPath(path);
+            } else if (urlObj.protocol === 'https:' && urlObj.hostname === 'kazderni.com') {
+              // HTTPS universal link: https://example.com/path/to/page  
+              const path = urlObj.pathname + urlObj.search + urlObj.hash;
+              console.log('Universal link to path:', path);
+              this.navigateToPath(path);
+            } else {
+              console.warn('Unhandled deep link protocol:', urlObj.protocol);
+            }
+          } catch (error) {
+            console.error('Error handling deep link:', error);
+          }
+        }
+        
+        
+        setupTabNavigation() {
+          const tabs = document.querySelectorAll('.tab-item');
+          tabs.forEach((tab, index) => {
+            tab.addEventListener('click', (e) => {
+              e.preventDefault();
+              const path = tab.dataset.path;
+              this.navigateToTab(index, path);
+              
+              // Update active state
+              tabs.forEach(t => t.classList.remove('active'));
+              tab.classList.add('active');
+            });
+          });
+        }
+        
+        navigateToTab(tabIndex, path) {
+          this.currentTabIndex = tabIndex;
+          this.navigationHistory.push(path);
+          this.navigateToPath(path);
+        }
+        
+        handleBackNavigation() {
+          if (this.navigationHistory.length > 1) {
+            this.navigationHistory.pop(); // Remove current
+            const previousPath = this.navigationHistory[this.navigationHistory.length - 1];
+            this.navigateToPath(previousPath, false); // Don't add to history
+          }
+        }
+        
+        navigateToPath(path, addToHistory = true) {
+          const baseUrl = 'https://kazderni.com';
+          const fullUrl = baseUrl + path;
+          console.log('Navigating to:', fullUrl);
+          
+          if (addToHistory && this.navigationHistory[this.navigationHistory.length - 1] !== path) {
+            this.navigationHistory.push(path);
+          }
+          
+          this.webview.src = fullUrl;
+          this.showLoading();
+        }
+        
+        // Enhanced loading screen functionality
+        
+        showLoadingWithMessage(message = 'Loading...') {
+          if (this.loading) {
+            this.loading.innerHTML = `
+              <div class="loading-content">
+                <div class="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin mb-2"></div>
+                <div>${message}</div>
+              </div>
+            `;
+            this.loading.style.display = 'flex';
+          }
+        }
+        
+
+        showLoading() {
+          if (this.loading) {
+            this.showLoadingWithMessage();
+          }
+        }
+        
+        hideLoading() {
+          if (this.loading) {
+            this.loading.style.opacity = '0';
+            setTimeout(() => {
+              this.loading.style.display = 'none';
+            }, 300);
+          }
+        }
+        
+        showError(message) {
+          if (this.loading) {
+            this.loading.innerHTML = `
+              <div class="loading-content">
+                <div style="color: #ff6b6b; margin-bottom: 16px;">⚠️</div>
+                <div>${message}</div>
+                <button onclick="window.location.reload()" style="
+                  margin-top: 16px; 
+                  padding: 8px 16px; 
+                  background: rgba(255,255,255,0.2); 
+                  border: 1px solid rgba(255,255,255,0.3); 
+                  color: white; 
+                  border-radius: 4px;
+                  cursor: pointer;
+                ">Retry</button>
+              </div>
+            `;
+          }
+        }
+        
+        // Initialize all integrations
+        initializeIntegrations() {
+          this.initializeOneSignal();
+          this.initializeFirebase();
+          this.initializeRevenueCat();
+        }
+        
+        // Initialize OneSignal
+        initializeOneSignal() {
+          const oneSignalAppId = '00523b27-01fb-4428-a2fa-0901ee274e69';
+          if (oneSignalAppId && window.OneSignal) {
+            try {
+              window.OneSignal.init({
+                appId: oneSignalAppId,
+                safari_web_id: oneSignalAppId,
+                allowLocalhostAsSecureOrigin: true,
+              });
+              
+              // Request permission after initialization
+              setTimeout(() => {
+                window.OneSignal.showSlidedownPrompt().then(() => {
+                  console.log('✓ OneSignal prompt shown');
+                }).catch(err => {
+                  console.log('OneSignal prompt error:', err);
+                });
+              }, 2000);
+              
+              console.log('✓ OneSignal initialized with App ID:', oneSignalAppId);
+            } catch (error) {
+              console.error('OneSignal initialization error:', error);
+            }
+          } else if (oneSignalAppId) {
+            console.warn('OneSignal App ID provided but OneSignal SDK not loaded');
+          }
+        }
+        
+        // Initialize Firebase
+        initializeFirebase() {
+          const firebaseEnabled = true;
+          if (firebaseEnabled && window.firebase) {
+            try {
+              // Use actual Firebase configuration if available
+              const firebaseConfig = (() => {
+                  try {
+                    const config = JSON.parse(atob('ewogICJwcm9qZWN0X2luZm8iOiB7CiAgICAicHJvamVjdF9udW1iZXIiOiAiMjk3NzM0ODQ0ODYzIiwKICAgICJwcm9qZWN0X2lkIjogImthemRlcm5pLW1vYmlsb3VkIiwKICAgICJzdG9yYWdlX2J1Y2tldCI6ICJrYXpkZXJuaS1tb2JpbG91ZC5maXJlYmFzZXN0b3JhZ2UuYXBwIgogIH0sCiAgImNsaWVudCI6IFsKICAgIHsKICAgICAgImNsaWVudF9pbmZvIjogewogICAgICAgICJtb2JpbGVzZGtfYXBwX2lkIjogIjE6Mjk3NzM0ODQ0ODYzOmFuZHJvaWQ6NTU2MThlNmY5ZDA5NmI5ZWZiMzEwYSIsCiAgICAgICAgImFuZHJvaWRfY2xpZW50X2luZm8iOiB7CiAgICAgICAgICAicGFja2FnZV9uYW1lIjogImNvbS5rYXpkZXJuaS5hcHAiCiAgICAgICAgfQogICAgICB9LAogICAgICAib2F1dGhfY2xpZW50IjogW10sCiAgICAgICJhcGlfa2V5IjogWwogICAgICAgIHsKICAgICAgICAgICJjdXJyZW50X2tleSI6ICJBSXphU3lBT0dMZUYzbFRBZkcyd2NRSXBpZlJDTDJnSzEzX2FOeGMiCiAgICAgICAgfQogICAgICBdLAogICAgICAic2VydmljZXMiOiB7CiAgICAgICAgImFwcGludml0ZV9zZXJ2aWNlIjogewogICAgICAgICAgIm90aGVyX3BsYXRmb3JtX29hdXRoX2NsaWVudCI6IFtdCiAgICAgICAgfQogICAgICB9CiAgICB9CiAgXSwKICAiY29uZmlndXJhdGlvbl92ZXJzaW9uIjogIjEiCn0='));
+                    const client = config.client?.[0];
+                    return {
+                      apiKey: client?.api_key?.[0]?.current_key || "YOUR_API_KEY",
+                      authDomain: config.project_info?.project_id + ".firebaseapp.com",
+                      projectId: config.project_info?.project_id || "your-project-id",
+                      storageBucket: config.project_info?.storage_bucket || config.project_info?.project_id + ".appspot.com",
+                      messagingSenderId: config.project_info?.project_number || "123456789",
+                      appId: client?.client_info?.mobilesdk_app_id || "1:123456789:web:abcdef123456"
+                    };
+                  } catch (e) {
+                    console.warn('Error parsing Firebase config:', e);
+                    return null;
+                  }
+                })() || {
+                apiKey: "YOUR_API_KEY_HERE",
+                authDomain: "your-project.firebaseapp.com",
+                projectId: "your-project-id",
+                storageBucket: "your-project.appspot.com",
+                messagingSenderId: "123456789",
+                appId: "1:123456789:web:abcdef123456"
+              };
+              
+              if (!window.firebase.apps.length) {
+                window.firebase.initializeApp(firebaseConfig);
+                window.firebase.analytics();
+                console.log('✓ Firebase Analytics initialized with config:', firebaseConfig);
+              }
+            } catch (error) {
+              console.error('Firebase initialization error:', error);
+            }
+          }
+        }
+        
+        // Initialize RevenueCat
+        initializeRevenueCat() {
+          const revenueCatConfig = {"iosApiKey":"","androidApiKey":""};
+          if ((revenueCatConfig.iosApiKey || revenueCatConfig.androidApiKey) && window.Purchases) {
+            try {
+              const apiKey = this.isNative === 'ios' ? revenueCatConfig.iosApiKey : revenueCatConfig.androidApiKey;
+              if (apiKey) {
+                window.Purchases.setDebugLogsEnabled(true);
+                window.Purchases.configure({
+                  apiKey: apiKey,
+                });
+                console.log('✓ RevenueCat initialized');
+              }
+            } catch (error) {
+              console.error('RevenueCat initialization error:', error);
+            }
+          }
+        }
+      }
+      
+      // Initialize app when DOM is loaded
+      document.addEventListener('DOMContentLoaded', () => {
+        window.nativeApp = new NativeWebViewApp();
+      });
+      
+      // Global error handling
+      window.addEventListener('error', (e) => {
+        console.error('Global error:', e.error);
+      });
+      
+      window.addEventListener('unhandledrejection', (e) => {
+        console.error('Unhandled promise rejection:', e.reason);
+      });
+    </script>
+  </body>
+</html>

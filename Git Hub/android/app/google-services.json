@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "297734844863",
+    "project_id": "kazderni-mobiloud",
+    "storage_bucket": "kazderni-mobiloud.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:297734844863:android:55618e6f9d096b9efb310a",
+        "android_client_info": {
+          "package_name": "com.kazderni.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAOGLeF3lTAfG2wcQIpifRCL2gK13_aNxc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

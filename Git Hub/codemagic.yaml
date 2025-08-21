@@ -1,0 +1,125 @@
+workflows:
+  android-workflow:
+    name: Android Workflow
+    max_build_duration: 120
+    environment:
+      android_signing:
+        - keystore_reference
+      groups:
+        - google_play
+      vars:
+        PACKAGE_NAME: "com.kazderni.app"
+        GOOGLE_PLAY_TRACK: "internal"
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Set up local.properties
+        script: |
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > "$CM_BUILD_DIR/android/local.properties"
+      - name: Install dependencies
+        script: |
+          npm ci
+      - name: Set up Capacitor
+        script: |
+          npx cap add android
+          npx cap sync android
+      - name: Configure permissions
+        script: |
+          node scripts/configure-permissions.js
+      - name: Set up key.properties for signing
+        script: |
+          echo "$CM_KEYSTORE" | base64 --decode > $CM_KEYSTORE_PATH
+          cat >> "$CM_BUILD_DIR/android/key.properties" <<EOF
+          storePassword=$CM_KEYSTORE_PASSWORD
+          keyPassword=$CM_KEY_PASSWORD  
+          keyAlias=$CM_KEY_ALIAS
+          storeFile=$CM_KEYSTORE_PATH
+          EOF
+      - name: Build Android release
+        script: |
+          LATEST_GOOGLE_PLAY_VERSION_CODE=$(google-play get-latest-build-number --package-name "$PACKAGE_NAME" --tracks="$GOOGLE_PLAY_TRACK")
+          if [ -z $LATEST_GOOGLE_PLAY_VERSION_CODE ]; then
+            UPDATED_VERSION_CODE=1
+          else
+            UPDATED_VERSION_CODE=$(($LATEST_GOOGLE_PLAY_VERSION_CODE + 1))
+          fi
+          cd android
+          ./gradlew bundleRelease             -PversionCode=$UPDATED_VERSION_CODE             -PversionName=1.0.$UPDATED_VERSION_CODE
+    artifacts:
+      - android/app/build/outputs/**/*.aab
+      - android/app/build/outputs/**/*.apk
+      - android/app/build/outputs/**/mapping.txt
+    publishing:
+      email:
+        recipients:
+          - user@example.com
+        notify:
+          success: true
+          failure: false
+      google_play:
+        credentials: $GCLOUD_SERVICE_ACCOUNT_CREDENTIALS
+        track: $GOOGLE_PLAY_TRACK
+        submit_as_draft: false
+
+  ios-workflow:
+    name: iOS Workflow
+    max_build_duration: 120
+    integrations:
+      app_store_connect: codemagic
+    environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: $BUNDLE_ID
+      groups:
+        - app_store_credentials
+      vars:
+        BUNDLE_ID: "com.journey1"
+        APP_ID: "$APP_STORE_APP_ID"
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Install dependencies
+        script: |
+          npm ci
+      - name: Set up Capacitor
+        script: |
+          npx cap add ios
+          npx cap sync ios
+      - name: Configure permissions
+        script: |
+          node scripts/configure-permissions.js
+      - name: Set up provisioning profiles
+        script: |
+          keychain initialize
+          app-store-connect fetch-signing-files "$BUNDLE_ID"             --platform IOS             --type IOS_APP_STORE             --certificate-key=@env:CERTIFICATE_PRIVATE_KEY             --create
+      - name: Use provisioning profiles
+        script: |
+          keychain add-certificates
+          xcode-project use-profiles
+      - name: Increment build number
+        script: |
+          cd ios/App
+          LATEST_BUILD_NUMBER=$(app-store-connect get-latest-app-store-build-number "$APP_ID")
+          agvtool new-version -all $(($LATEST_BUILD_NUMBER + 1))
+      - name: Build ipa for distribution
+        script: |
+          cd ios/App
+          xcode-project build-ipa             --workspace "App.xcworkspace"             --scheme "App"
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - ios/App/build/Build/Products/Release-iphoneos/*.dSYM
+    publishing:
+      email:
+        recipients:
+          - user@example.com
+        notify:
+          success: true
+          failure: false
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        beta_groups:
+          - App Store Connect Users
+        submit_to_app_store: false
